@@ -1,11 +1,16 @@
 # XNNs - Cross Neural Networks
 
-This repository serves as a hub for inquiry into XNNs, or Cross Neural Networks.
+## 1 - Abstract
 
-The significance of XNNs is that they may, in possessing innate deliberation mechanisms that more
-traditional models lack, be a viable architecture for artificial general intelligence, or AGI.
+The XNN, or Cross Neural Network, is a novel form of neural network, which aims to embody
+bio-analogous properties, which current models fundamentally lack, at the core of the architecture.
 
-## Overview
+The intention of this is that innate deliberation mechanisms may arise in processing, rendering the
+architecture a viable option for AGI, or artificial general intelligence.
+
+## 2 - Contents
+
+### 2.1 - Overview
 
 XNNs are similar in form factor to Hopfield networks, but only superficially.
 
@@ -33,7 +38,7 @@ real-time continuous processing and interaction is referred to as asynchronous n
 
 Since the absence of a connection can be represented by a connection weight of zero; since any
 graph can be said to contain a subset of the connections of a similar graph where all nodes are
-connected; and since any conceivable neural network must be some sort of graph; it can be said tha
+connected; and since any conceivable neural network must be some sort of graph; it can be said that
 any conceivable neural network architecture can be replicated within an XNN.
 
 Therefore, if any neural network architecture can achieve AGI-level cognition, it can be said that
@@ -47,7 +52,7 @@ reactive systems.
 In seeking to render XNNs as adaptive as possible to an innumerable variety of contexts, they
 should be trained exclusively with reinforcement learning.
 
-## Goals
+### 2.2 - Goals
 
 The primary thing lacking is a reliable and well-tested reinforcement training methodology for
 XNNs. Though there are proposals for such methods, they have yet to consistently demonstrate their
