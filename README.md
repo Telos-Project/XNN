@@ -53,7 +53,9 @@ unique abilities to embody active and spontaneous initiative, whereas most AI mo
 reactive systems.
 
 In seeking to render XNNs as adaptive as possible to an innumerable variety of contexts, they
-should be trained exclusively with reinforcement learning.
+should be trained exclusively with reinforcement learning. Since a major goal of XNNs is to more
+closely emulate biological computation, said reinforcement learning should prioritize, perhaps
+exclusively, local learning rules.
 
 ### 2.2 - Goals
 
