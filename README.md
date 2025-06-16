@@ -2,11 +2,14 @@
 
 ## 1 - Abstract
 
+***Attention isn't all you need. Think about it.***
+
 The XNN, or Cross Neural Network, is a novel form of neural network, which aims to embody
 bio-analogous properties, which current models fundamentally lack, at the core of the architecture.
 
-The intention of this is that innate deliberation mechanisms may arise in processing, rendering the
-architecture a viable option for AGI, or artificial general intelligence.
+The intention of this is that innate deliberation mechanisms may arise in processing, and it is
+precisely the element of deliberation, rather than merely attention, which renders the architecture
+a viable option for AGI, or artificial general intelligence.
 
 ## 2 - Contents
 
