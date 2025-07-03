@@ -8,8 +8,9 @@ The XNN, or Cross Neural Network, is a novel form of neural network, which aims 
 bio-analogous properties, which current models fundamentally lack, at the core of the architecture.
 
 The intention of this is that innate deliberation mechanisms may arise in processing, and it is
-precisely the element of deliberation, rather than merely attention, which renders the architecture
-a viable option for AGI, or artificial general intelligence.
+precisely the element of deliberation (initiation, hesitation, meditation, etc.), rather than
+merely attention, which renders the architecture a viable option for AGI, or artificial general
+intelligence.
 
 ## 2 - Contents
 
@@ -24,8 +25,8 @@ node contains a state at any given time, and these can be stored in a simple vec
 matrix.
 
 Node states and connection properties can consist solely of numerical activations and weights, but
-certain proposals feature what are referred to as "atypical neural parameters" (ATNP), this being
-anything beyond the aforementioned values.
+this may be expanded through what are referred to as "atypical neural parameters" (ATNP), these
+being anything beyond the aforementioned values.
 
 The network processes information in "steps", where the state of each node is sent over its
 connections to all other nodes, being transformed by the properties of said connections, after
@@ -75,3 +76,6 @@ punished when feedback is delivered.
 
 - Assigning activations passed through the network types, with certain types used for processing
 and others used for training. This functionality is intended to mimic that of neurotransmitters.
+
+Furthermore, differing approaches to ATNP, and other non-emergent aspects of XNN-based systems, may
+be settled on by way of, rather than deliberate engineering, genetic algorithms.
