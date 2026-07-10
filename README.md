@@ -12,6 +12,10 @@ precisely the element of deliberation (initiation, hesitation, meditation, etc.)
 merely attention, which renders the architecture a viable option for AGI, or artificial general
 intelligence.
 
+Neural networks which are explicitly modeled after organic computation, and thus possess a
+continous and dynamical nature, which makes them distinct from the sort of trained functions that
+other neural networks act as, may be referred to as neuron networks.
+
 ## 2 - Contents
 
 ### 2.1 - Overview
