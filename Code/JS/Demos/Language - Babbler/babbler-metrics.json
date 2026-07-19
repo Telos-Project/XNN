@@ -1,0 +1,191 @@
+{
+  "seed": 1,
+  "exchanges": 12000,
+  "vocabulary": [
+    "hi",
+    "bye",
+    "yes",
+    "no",
+    "how",
+    "are",
+    "you",
+    "i",
+    "am",
+    "good",
+    "bad",
+    "fine",
+    "thanks",
+    "help",
+    "please",
+    "sorry"
+  ],
+  "grammar": [
+    {
+      "trigger": [
+        "hi"
+      ],
+      "responses": [
+        [
+          "hi"
+        ]
+      ]
+    },
+    {
+      "trigger": [
+        "bye"
+      ],
+      "responses": [
+        [
+          "bye"
+        ]
+      ]
+    },
+    {
+      "trigger": [
+        "how",
+        "are",
+        "you"
+      ],
+      "responses": [
+        [
+          "good"
+        ],
+        [
+          "fine"
+        ]
+      ]
+    },
+    {
+      "trigger": [
+        "help",
+        "please"
+      ],
+      "responses": [
+        [
+          "yes"
+        ]
+      ]
+    },
+    {
+      "trigger": [
+        "thanks"
+      ],
+      "responses": null
+    },
+    {
+      "trigger": [
+        "sorry"
+      ],
+      "responses": [
+        [
+          "no"
+        ]
+      ]
+    }
+  ],
+  "untrainedBaseline": {
+    "tickLevelAccuracy": 0.5333333333333333,
+    "exchangeTimingAccuracy": 0.008333333333333333,
+    "wordAccuracyGivenCorrectTiming": 1
+  },
+  "bestCheckpointScore": 1.1222222222222222,
+  "finalEvaluation": {
+    "tickLevelAccuracy": 0.7101190476190476,
+    "exchangeTimingAccuracy": 0.07916666666666666,
+    "wordAccuracyGivenCorrectTiming": 0.5263157894736842
+  },
+  "totalInterruptCorrections": 10785,
+  "trainingHistory": [
+    {
+      "exchange": 0,
+      "tickLevelAccuracy": 0.5761904761904761,
+      "exchangeTimingAccuracy": 0.022222222222222223,
+      "wordAccuracyGivenCorrectTiming": 0,
+      "score": 0.022222222222222223
+    },
+    {
+      "exchange": 1000,
+      "tickLevelAccuracy": 0.5476190476190477,
+      "exchangeTimingAccuracy": 0.03333333333333333,
+      "wordAccuracyGivenCorrectTiming": 0.6666666666666666,
+      "score": 0.7
+    },
+    {
+      "exchange": 2000,
+      "tickLevelAccuracy": 0.7063492063492064,
+      "exchangeTimingAccuracy": 0.12222222222222222,
+      "wordAccuracyGivenCorrectTiming": 1,
+      "score": 1.1222222222222222
+    },
+    {
+      "exchange": 3000,
+      "tickLevelAccuracy": 0.6634920634920635,
+      "exchangeTimingAccuracy": 0.1,
+      "wordAccuracyGivenCorrectTiming": 0.6666666666666666,
+      "score": 0.7666666666666666
+    },
+    {
+      "exchange": 4000,
+      "tickLevelAccuracy": 0.8428571428571429,
+      "exchangeTimingAccuracy": 0.2222222222222222,
+      "wordAccuracyGivenCorrectTiming": 0.75,
+      "score": 0.9722222222222222
+    },
+    {
+      "exchange": 5000,
+      "tickLevelAccuracy": 0.6952380952380952,
+      "exchangeTimingAccuracy": 0.044444444444444446,
+      "wordAccuracyGivenCorrectTiming": 0,
+      "score": 0.044444444444444446
+    },
+    {
+      "exchange": 6000,
+      "tickLevelAccuracy": 0.7206349206349206,
+      "exchangeTimingAccuracy": 0.06666666666666667,
+      "wordAccuracyGivenCorrectTiming": 0.6666666666666666,
+      "score": 0.7333333333333333
+    },
+    {
+      "exchange": 7000,
+      "tickLevelAccuracy": 0.7428571428571429,
+      "exchangeTimingAccuracy": 0.06666666666666667,
+      "wordAccuracyGivenCorrectTiming": 0.8333333333333334,
+      "score": 0.9
+    },
+    {
+      "exchange": 8000,
+      "tickLevelAccuracy": 0.773015873015873,
+      "exchangeTimingAccuracy": 0.14444444444444443,
+      "wordAccuracyGivenCorrectTiming": 0.6153846153846154,
+      "score": 0.7598290598290598
+    },
+    {
+      "exchange": 9000,
+      "tickLevelAccuracy": 0.7952380952380952,
+      "exchangeTimingAccuracy": 0.13333333333333333,
+      "wordAccuracyGivenCorrectTiming": 0.6666666666666666,
+      "score": 0.7999999999999999
+    },
+    {
+      "exchange": 10000,
+      "tickLevelAccuracy": 0.6571428571428571,
+      "exchangeTimingAccuracy": 0.07777777777777778,
+      "wordAccuracyGivenCorrectTiming": 0.7142857142857143,
+      "score": 0.7920634920634921
+    },
+    {
+      "exchange": 11000,
+      "tickLevelAccuracy": 0.42698412698412697,
+      "exchangeTimingAccuracy": 0,
+      "wordAccuracyGivenCorrectTiming": null,
+      "score": 0
+    },
+    {
+      "exchange": 11999,
+      "tickLevelAccuracy": 0.6968253968253968,
+      "exchangeTimingAccuracy": 0.05555555555555555,
+      "wordAccuracyGivenCorrectTiming": 0.2,
+      "score": 0.25555555555555554
+    }
+  ]
+}
