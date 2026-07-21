@@ -3,11 +3,38 @@
  *
  * A from-scratch rebuild around bio-analogous local learning: spatially-
  * embedded, Dale's-Law-constrained, sparse-but-densely-stored topology;
- * pure spiking dynamics (leaky integrate-and-fire, rate-coded readout);
- * continuous spike-timing-dependent plasticity (STDP) gated by a diffuse
- * ambient neuromodulator standing in for volume-transmitted reward signals
- * (dopamine-like reward-prediction-error); and slow structural plasticity
- * (synapse formation/pruning) on top of the fast weight dynamics.
+ * pure spiking dynamics (leaky integrate-and-fire, rate-coded readout,
+ * distance-dependent conduction delay); continuous spike-timing-dependent
+ * plasticity (STDP) gated by a diffuse ambient neuromodulator standing in
+ * for volume-transmitted reward signals (dopamine-like reward-prediction-
+ * error); and slow structural plasticity (synapse formation/pruning) on
+ * top of the fast weight dynamics.
+ *
+ * PARAMETER GROUNDING: default constants are set from real published
+ * values wherever they exist, not invented and presented as if grounded --
+ * each is cited inline. One tick is treated as approximately 1ms of real
+ * time throughout, so STDP windows and conduction delay can be specified
+ * in physiologically meaningful, mutually consistent units:
+ *   - E/I ratio 80/20, inhibitory synapses ~2x excitatory strength
+ *     (Braitenberg & Schuz 1998; canonical cortical value, widely used in
+ *     spiking models; inhibitory/excitatory strength asymmetry is commonly
+ *     modeled up to ~8x in balanced-network literature -- 2x used here as
+ *     a conservative default)
+ *   - STDP time constants tau+ = tau- = 15ms, window ~40ms (Bi & Poo 1998;
+ *     Sjostrom & Gerstner 2010 review cites ~10-20ms as the standard range)
+ *   - Conduction velocity ~1 m/s (unmyelinated axon range is ~0.5-10 m/s;
+ *     organoid/cultured tissue is unmyelinated, so the slow end of the
+ *     range is used, not the fast myelinated-tract value)
+ *   - Target avalanche size distribution: power law with exponent -1.5
+ *     (Beggs & Plenz 2003; replicated extensively since) -- see the
+ *     accompanying analysis script, not asserted here, since this is a
+ *     property to MEASURE from the network's own spontaneous activity,
+ *     not something that can be hard-coded into a parameter.
+ *   - Maturation to network-level synchrony genuinely takes weeks to
+ *     months in real organoids/cultures (multiple MEA studies), not a
+ *     handful of ticks -- structuralPlasticityFloor and maturityDecayRate
+ *     are chosen so the model's own "developmental" window is long
+ *     relative to a single task-learning run, not fast by construction.
  *
  * PUBLIC INTERFACE: create() and step() only. There is no separate train()
  * -- real synaptic plasticity is not a distinct mode a neuron enters, it is
@@ -47,6 +74,9 @@
  *     lastConsolidated  tick of this connection's last non-negligible
  *                        weight change -- used to detect long-quiet
  *                        connections eligible for pruning.
+ *     delay             ticks of propagation delay, fixed at creation from
+ *                        distance / conduction velocity (minimum 1 -- no
+ *                        connection is ever instantaneous).
  *   }}
  *
  *   Neuron = { state: [0,1], factors: {
@@ -54,7 +84,8 @@
  *                        creation, constrains the SIGN of every one of
  *                        this neuron's existing outgoing weights forever)
  *     position           number[] -- fixed spatial coordinate, drives
- *                        distance-dependent connection probability
+ *                        distance-dependent connection probability AND
+ *                        conduction delay
  *     restingPotential, leakRate   -- real exponential leak toward rest
  *                        when not firing, replacing the earlier squaring
  *                        relaxation (which had no biological grounding)
@@ -86,6 +117,10 @@
  *                             starts high, decays toward a floor with age
  *                             -- volatile young connectivity stabilizing
  *                             with maturity
+ *   pendingDrive              ring buffer of future-arriving spike drive,
+ *                             one array of length N per delay slot -- the
+ *                             mechanism behind conduction delay. Internal
+ *                             bookkeeping; not meant to be hand-edited.
  *   rngState                  serializable PRNG state (a plain integer),
  *                             so the model can make its own random
  *                             decisions (spontaneous firing, structural
@@ -156,10 +191,27 @@ function create(n, options = {}) {
     seed = 1,
     dimensions = 3,
     spaceSize = 10,
-    excitatoryFraction = 0.8,
+    excitatoryFraction = 0.8, // Braitenberg & Schuz 1998; canonical cortical E/I ratio
     connectionDecayLength = 3,
-    baseConnectionProb = 0.5,
+    baseConnectionProb = 0.25, // EMPIRICALLY CALIBRATED, not a guess: the
+    // earlier default of 0.5 produced deeply supercritical, runaway
+    // spontaneous activity (avalanches spanning nearly the whole
+    // simulation, no power-law signature); 0.15 was subcritical (avalanches
+    // die out too fast, exponent -2.4 to -3.0 vs the real target of -1.5,
+    // Beggs & Plenz 2003). 0.25 was the closest approach found to that
+    // target during calibration (exponent ~-1.1; see analyze-avalanches.js)
+    // -- still an approximation, not an exact match. See that script's
+    // notes on why hitting -1.5 precisely likely needs either a finer
+    // search or a genuine self-organizing mechanism, which this network
+    // does not yet have.
     maxWeight = 1,
+    inhibitoryWeightScale = 2, // inhibitory synapses modeled as several-fold stronger
+    // than excitatory in balanced-network literature (up to ~8x); 2x used
+    // here as a conservative default, not the extreme cited value.
+    conductionVelocity = 1, // "distance units" per tick; ~1 m/s, the slow
+    // (unmyelinated) end of the real 0.5-10 m/s range, matching organoid/
+    // cultured tissue rather than myelinated adult white-matter tracts.
+    maxDelay = 20,
     spontaneousFraction = 0,
     spontaneousRate = 0.01,
     defaultThreshold = 1,
@@ -203,15 +255,19 @@ function create(n, options = {}) {
       const d = distance(vector[i].factors.position, vector[j].factors.position);
       const prob = baseConnectionProb * Math.exp(-d / connectionDecayLength);
       const exists = nextRandom() < prob;
+      const delay = Math.min(maxDelay, Math.max(1, Math.round(d / conductionVelocity)));
       let weight = 0;
       if (exists) {
-        const magnitude = nextRandom() * maxWeight;
-        weight = vector[i].factors.type === "excitatory" ? magnitude : -magnitude;
+        const isExcitatory = vector[i].factors.type === "excitatory";
+        const magnitude = nextRandom() * maxWeight * (isExcitatory ? 1 : inhibitoryWeightScale);
+        weight = isExcitatory ? magnitude : -magnitude;
       }
-      row.push({ weight, factors: { exists, eligibility: 0, lastConsolidated: 0 } });
+      row.push({ weight, factors: { exists, eligibility: 0, lastConsolidated: 0, delay } });
     }
     matrix.push(row);
   }
+
+  const pendingDrive = Array.from({ length: maxDelay + 1 }, () => new Array(n).fill(0));
 
   return {
     matrix,
@@ -221,6 +277,7 @@ function create(n, options = {}) {
       ambientDecay: 0.05,
       age: 0,
       structuralPlasticityRate: 1.0,
+      pendingDrive,
       rngState,
     },
   };
@@ -254,9 +311,9 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     homeostaticLr = 0.002,
     activityEmaAlpha = 0.02,
     thresholdBounds = [0.3, 1.0],
-    stdpWindow = 15,
-    tauPlus = 5,
-    tauMinus = 5,
+    stdpWindow = 40, // ms; Sjostrom & Gerstner 2010 review, ~10-20ms tau -> ~40ms window
+    tauPlus = 15, // ms; Bi & Poo 1998 / standard STDP review value range 10-20ms
+    tauMinus = 15,
     aPlus = 0.5,
     aMinus = 0.5,
     eligibilityDecay = 0.05,
@@ -268,12 +325,15 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     growthProb = 0.05,
     pruneAge = 200,
     pruneProb = 0.05,
-    maturityDecayRate = 0.999,
+    maturityDecayRate = 0.999, // slow -- real organoid maturation takes
+    // weeks to months (multiple MEA studies), not a handful of ticks; see
+    // module doc comment.
     structuralPlasticityFloor = 0.05,
   } = options;
 
   const n = model.vector.length;
   const age = model.factors.age;
+  const maxDelay = model.factors.pendingDrive.length - 1;
 
   let rngState = model.factors.rngState;
   const nextRandom = () => {
@@ -289,22 +349,29 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     return false;
   });
 
-  // 2. Incoming drive -- ONLY over connections that structurally exist,
-  // regardless of what weight happens to hold (weight is already 0 when
-  // !exists, but this is checked explicitly rather than relied upon).
-  const incoming = new Array(n).fill(0);
+  // 2. Incoming drive: ONLY what was scheduled to arrive THIS tick (slot 0
+  // of the pending-drive ring buffer) -- every connection has a real,
+  // distance-derived conduction delay (minimum 1 tick), so nothing is ever
+  // instantaneous, matching real axonal propagation rather than the
+  // zero-delay assumption every earlier version of this module made.
+  const incoming = model.factors.pendingDrive[0];
+  const pendingDrive = model.factors.pendingDrive.slice(1);
+  pendingDrive.push(new Array(n).fill(0));
+
   for (let i = 0; i < n; i++) {
     if (!fired[i]) continue;
     const row = model.matrix[i];
     for (let j = 0; j < n; j++) {
-      if (row[j].factors.exists) incoming[j] += row[j].weight;
+      if (!row[j].factors.exists) continue;
+      const slot = row[j].factors.delay - 1; // delay>=1, slot 0 of `pendingDrive` = next tick
+      if (slot >= 0 && slot < maxDelay) pendingDrive[slot][j] += row[j].weight;
     }
   }
 
   // 3. Leaky integrate-and-fire state update (replaces the earlier,
   // biologically-ungrounded squaring relaxation): fired neurons reset to
   // resting potential; others leak a fraction of the way toward it before
-  // incoming drive is added.
+  // incoming (delayed) drive is added.
   const newState = new Array(n);
   for (let i = 0; i < n; i++) {
     const f = model.vector[i].factors;
@@ -428,6 +495,7 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
       ambientDecay: model.factors.ambientDecay,
       age: age + 1,
       structuralPlasticityRate,
+      pendingDrive,
       rngState,
     },
   };
