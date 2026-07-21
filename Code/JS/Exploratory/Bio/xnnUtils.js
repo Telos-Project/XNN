@@ -262,7 +262,7 @@ function create(n, options = {}) {
         const magnitude = nextRandom() * maxWeight * (isExcitatory ? 1 : inhibitoryWeightScale);
         weight = isExcitatory ? magnitude : -magnitude;
       }
-      row.push({ weight, factors: { exists, eligibility: 0, lastConsolidated: 0, delay } });
+      row.push({ weight, factors: { exists, eligibility: 0, lastConsolidated: 0, lastActive: 0, delay } });
     }
     matrix.push(row);
   }
@@ -317,7 +317,11 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     aPlus = 0.5,
     aMinus = 0.5,
     eligibilityDecay = 0.05,
-    consolidationRate = 0.05,
+    hebbianRate = 0.01, // always-on, pattern-driven consolidation -- what
+    // lets the network learn from input structure alone with zero feedback
+    modulatoryRate = 0.05, // additional reward-scaled consolidation on top
+    // (matches the old single-rate default's magnitude when feedback is present)
+    activityThreshold = 0.05, // |eligibility| above this counts as "genuinely active" for pruning purposes
     maxWeight = 1,
     spikeWindowDecay = 0.9,
     structuralPlasticityInterval = 50,
@@ -433,16 +437,27 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
   // the entire external-feedback interface.
   const ambientModulator = model.factors.ambientModulator * (1 - model.factors.ambientDecay) + feedback;
 
-  // 7. Consolidation: eligibility becomes real weight change, gated by the
-  // CURRENT ambient modulator level -- three-factor plasticity. Dale's Law
-  // is enforced here too (not just at creation): sign is clamped to match
-  // the source neuron's type, every time.
+  // 7. Consolidation: TWO plasticity pathways run simultaneously, not one
+  // gated pathway (see conversation -- the earlier single-rate, modulator-
+  // multiplied formula produced EXACTLY zero weight change whenever
+  // ambientModulator was 0, meaning the network could not learn from input
+  // structure alone at all). Real cortical synapses show baseline Hebbian/
+  // STDP plasticity independent of neuromodulation, with dopamine-gated
+  // three-factor plasticity acting as an ADDITIONAL amplifying pathway
+  // (well-established specifically at corticostriatal synapses), not a
+  // strict on/off switch for all plasticity everywhere. hebbianRate is the
+  // always-on, pattern-driven term; modulatoryRate scales with the current
+  // ambient level on top of it. Setting hebbianRate=0 recovers the old,
+  // strictly-gated behavior if that's ever wanted. Dale's Law is enforced
+  // here too (not just at creation): sign is clamped to match the source
+  // neuron's type, every time.
   for (let i = 0; i < n; i++) {
     const isExcitatory = newNeuronFactors[i].type === "excitatory";
     for (let j = 0; j < n; j++) {
       const c = newMatrix[i][j];
       if (!c.factors.exists) continue;
-      const delta = consolidationRate * ambientModulator * c.factors.eligibility;
+      if (Math.abs(c.factors.eligibility) >= activityThreshold) c.factors.lastActive = age;
+      const delta = c.factors.eligibility * (hebbianRate + modulatoryRate * ambientModulator);
       if (Math.abs(delta) < 1e-9) continue;
       c.weight = isExcitatory ? clip(c.weight + delta, 0, maxWeight) : clip(c.weight + delta, -maxWeight, 0);
       c.factors.lastConsolidated = age;
@@ -451,10 +466,16 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
 
   // 8. Structural plasticity: rare, slow, scaled by the model's current
   // structuralPlasticityRate. Sustained high eligibility on a NONEXISTENT
-  // connection can grow a new synapse; a long-quiet EXISTING connection
-  // can be pruned. This is deliberately a different, slower process than
-  // consolidation -- ordinary weight updates can never create or destroy
-  // a connection on their own.
+  // connection can grow a new synapse; a long-quiet EXISTING connection can
+  // be pruned. Pruning is gated on `lastActive` (genuine eligibility
+  // quiescence, updated above regardless of whether a weight change
+  // occurred) rather than `lastConsolidated` (which only ever updates when
+  // delta is non-negligible) -- with hebbianRate=0 and no feedback, the old
+  // version would have made every connection look permanently "unconsoli-
+  // dated" and thus indiscriminately prune-eligible, independent of whether
+  // it was actually correlated or quiet. That bug is fixed by tracking
+  // activity itself, separately from whether it happened to produce a
+  // nonzero weight update.
   if (age % structuralPlasticityInterval === 0) {
     const rate = model.factors.structuralPlasticityRate;
     for (let i = 0; i < n; i++) {
@@ -466,8 +487,9 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
             c.factors.exists = true;
             c.weight = isExcitatory ? 0.1 : -0.1;
             c.factors.lastConsolidated = age;
+            c.factors.lastActive = age;
           }
-        } else if (age - c.factors.lastConsolidated > pruneAge && nextRandom() < rate * pruneProb) {
+        } else if (age - c.factors.lastActive > pruneAge && nextRandom() < rate * pruneProb) {
           c.factors.exists = false;
           c.weight = 0;
         }
