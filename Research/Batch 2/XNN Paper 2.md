@@ -2,176 +2,150 @@
 
 ## Abstract
 
-Cross Neural Networks (XNNs) are fully-recurrent, continuously-operating neural graphs trained without backpropagation, proposed as a substrate closer to organic cognition than conventional deep learning. This paper documents a phase of research that took that proposal literally: rebuilding the architecture from the ground up around real neuroscience, and testing it against the most direct empirical benchmark available — DishBrain, the 2022 experiment in which a dish of living cortical neurons learned to play Pong using no reward signal at all, only the tendency of biological tissue to prefer predictable stimulation over noise. We call this variant **OXNN (Organic XNN)**: spatially-embedded, Dale's-Law-respecting, spiking topology; continuous spike-timing-dependent plasticity (STDP) gated by a diffuse neuromodulator; and a dual-pathway consolidation rule that, unlike prior designs, can learn from input structure alone with zero reward, a capability we verify directly. We calibrate the substrate's spontaneous dynamics against a real, checkable signature of healthy cortical tissue — neuronal-avalanche criticality — and then attempt to replicate DishBrain's actual mechanism in miniature. The attempt fails, decisively and instructively: an initially promising result is traced to a connectivity confound and vanishes once corrected; a winner-take-all collapse pathology — the third independent appearance of this exact failure mode across this research program — is diagnosed, only partially mitigated, and shown to persist regardless of scale; and a wide, systematic search across regulatory mechanisms (synaptic scaling, inhibitory homeostasis, fast activity damping, richer stimulus design) neither reproduces the effect nor identifies a configuration that comes close. We treat this as a genuine, informative negative result rather than a dead end: it narrows a previously open-ended question to two concrete, separately testable hypotheses, and leaves behind a working, biologically-grounded local-learning engine whose core plasticity claim — pure Hebbian learning from pattern alone — is independently verified and real.
+Cross Neural Networks (XNNs) are fully-recurrent, continuously-operating neural graphs trained without backpropagation, proposed as a substrate closer to organic cognition than conventional deep learning. This paper documents a phase of research that took that proposal literally, rebuilding the architecture around real neuroscience — **OXNN (Organic XNN)** — and, in doing so, learned something that reshaped the whole research program: task performance was the wrong success criterion for this branch entirely. An early attempt to replicate DishBrain (Kagan et al., 2022), the experiment in which living cortical neurons learned Pong from stimulation predictability rather than reward, produced a clean, decisive negative result after ruling out a real confound and a genuine, recurring instability — valuable knowledge, but knowledge that pointed at the wrong target. We pivoted: from "can this learn a task" to "does this reproduce known biological dynamics, built bottom-up from the single cell, at minimal computational abstraction." That pivot paid off immediately. Working from a single, specific, checkable literature target (Softky & Koch's 1993 finding that plain integrate-and-fire neurons fire too regularly compared to real cortex), we found our own substrate had the *opposite* problem — pathologically bursty, not regular — diagnosed why, and closed most of the gap with biologically-motivated refractory and adaptation dynamics. Adding a full Izhikevich (2003) neuron as an optional per-neuron mode reproduced five distinct, real cortical firing classes from published parameter sets, including genuine bursting our simpler mechanism structurally could not reach. Scaling this to a full network surfaced a real unit-scale bug, then a genuine, informative tension: the same homeostatic regulation that fixed network-wide silence also actively suppresses the biological irregularity we were chasing. Every step here — including the DishBrain result that started it — narrowed real uncertainty into a specific, well-posed next question, which is the only standard this kind of research should be held to.
 
 ---
 
 ## 1. Introduction
 
-An XNN is the simplest possible recurrent substrate: every neuron connects to every other neuron (including itself) through a signed weight, and the network runs continuously rather than being invoked function-call style. Two properties distinguish it from conventional neural networks: **ASNP** (asynchronous neural processing — the network never stops, has no forward/backward pass distinction, and can be queried or interrupted at any instant) and **ATNP** (atypical neural parameters — signed weights and per-neuron bias, rather than the uniform, unsigned units typical of standard architectures). Prior work in this research program established that local, non-backpropagation learning rules can train such networks at all — closing most of the gap to a gradient-checked baseline on a genuine memory task, and producing real self-play competence with zero labelled data.
+An XNN is the simplest possible recurrent substrate: every neuron connects to every other neuron (including itself) through a signed weight, and the network runs continuously rather than being invoked function-call style. Two properties distinguish it from conventional neural networks: **ASNP** (asynchronous neural processing — no forward/backward pass distinction, queryable or interruptible at any instant) and **ATNP** (atypical neural parameters — signed weights and per-neuron bias, unlike the uniform units of standard architectures). Earlier work in this program established that local, non-backpropagation learning rules can train such networks at all. This phase asked whether the architecture itself could be made to resemble real neural tissue — **OXNN** — closely enough to test against it directly.
 
-This phase asks a different, harder question: not whether local learning works, but whether the *architecture itself* can be made to resemble real neural tissue closely enough to test against it directly. We call the result **OXNN**. The concrete benchmark is DishBrain (Kagan et al., 2022, *Neuron*): roughly 800,000 living cortical neurons on a multi-electrode array, taught to play Pong using no external reward channel — only the free-energy-principle claim (Friston et al.) that biological neurons intrinsically prefer predictable input over noise, and will self-organize toward actions that produce it. This paper is the account of building OXNN to attempt that replication, what happened, and what it teaches about where the real obstacles lie.
+That test, described in full below, changed the question being asked. We began by trying to replicate a specific behavioral phenomenon (DishBrain's reward-free, predictability-driven learning) and got a clean, well-earned negative result. Rather than treat that as a dead end, we recognized it as evidence of a **prior**, more fundamental problem: nothing about our substrate had ever been checked against real single-neuron biology at all. Every mechanism had been layered on top of a fixed threshold-crossing neuron whose own dynamics were never validated in isolation. This paper is the account of that recognition, the pivot it produced, and the concrete, quantitative progress that followed from taking dynamical fidelity — not task performance — as the actual goal.
 
 ---
 
 ## 2. From XNN to OXNN: Grounding Topology in Biology
 
-Every prior XNN in this program was fully, densely connected with no notion of physical space. Real cortical tissue is not: connectivity is sparse and falls off with distance, neurons are exclusively excitatory or inhibitory (**Dale's Law**), and signal transmission takes real time. OXNN's topology is built directly from these facts, each grounded in a specific published estimate rather than an invented constant:
+Every prior XNN was fully, densely connected with no notion of physical space. Real cortical tissue is not: connectivity is sparse and distance-dependent, neurons are exclusively excitatory or inhibitory (**Dale's Law**), and signal transmission takes real time.
 
 | Property | OXNN default | Source |
 |---|---|---|
-| Excitatory/inhibitory ratio | 80% / 20% | Braitenberg & Schüz, 1998 — canonical cortical estimate |
+| Excitatory/inhibitory ratio | 80% / 20% | Braitenberg & Schüz, 1998 |
 | Inhibitory synapse strength | 2× excitatory (conservative) | Balanced-network literature cites up to ~8× |
 | Connection probability | exponential decay with distance | standard cortical wiring assumption |
-| Conduction velocity | ~1 m/s | unmyelinated axon range (~0.5–10 m/s); organoid/cultured tissue is unmyelinated |
-| STDP time constant | τ ≈ 15ms, window ≈ 40ms | Bi & Poo, 1998; Sjöström & Gerstner, 2010 review |
+| Conduction velocity | ~1 m/s | unmyelinated axon range (~0.5–10 m/s); organoid tissue is unmyelinated |
+| STDP time constant | τ ≈ 15ms, window ≈ 40ms | Bi & Poo, 1998; Sjöström & Gerstner, 2010 |
 
-**Design philosophy: dense in the abstract, sparse in implementation.** The connection matrix remains a full N×N array — a connection that doesn't exist simply has weight 0 — but *existence* is tracked as an independent, structural fact (`exists`), never conflated with weight. This keeps the public interface stable while leaving room for a future, genuinely sparse storage backend (matching the fact that real synapse counts per neuron stay roughly constant regardless of brain size, which a dense array does not respect at scale) without changing what it means to query a connection. The same principle that let earlier XNN work extend arbitrary task metadata through an open `factors` field, without ever touching the core module, is what makes this substitution possible later without disruption now.
+**Design philosophy: dense in the abstract, sparse in implementation.** The connection matrix stays a full N×N array — a nonexistent connection simply has weight 0 — but existence (`exists`) is tracked independently of weight, so a future genuinely sparse storage backend (necessary for ever approaching real biological scale) could replace how the matrix is stored without changing what it means to query it. This has not yet been built; current scale is capped at a few hundred neurons.
 
-**Data structure.** A model is a plain, JSON-serializable object with three parts: a connection matrix, a neuron vector, and — new in OXNN — a **model-level `factors` object** for ambient, shared state (a diffuse neuromodulator level, a developmental-age counter, a structural-plasticity rate that decays with age, and the model's own serializable pseudo-random state, so the network can make its own stochastic decisions — spontaneous firing, structural rewiring — while remaining pure and fully reconstructable from its own saved data). Connection-level `factors` hold `exists`, a signed STDP eligibility trace, a genuine quiescence marker (`lastActive`), and a fixed conduction delay. Neuron-level `factors` hold Dale's-Law type, spatial position, leak/resting-potential parameters, a threshold (what homeostasis now adjusts, replacing the earlier additive-bias mechanism), and a rate-coded spike-count readout.
-
-**Public interface: `create` and `step` only.** OXNN has no separate training function. Real synaptic plasticity is not a distinct mode a neuron enters — it is continuous and intrinsic to ordinary operation — so local STDP and neuromodulator-gated consolidation both live inside `step`, running every tick regardless of whether anything externally interesting is happening:
-
-```javascript
-function create(n, options) {
-  // assign each neuron a spatial position, a Dale's-Law type, a threshold;
-  // for every (i, j) pair, compute connection probability from distance,
-  // draw existence, and if it exists, a signed weight and a conduction
-  // delay derived from distance / conductionVelocity (minimum 1 tick --
-  // nothing is ever instantaneous)
-  return { matrix, vector, factors };  // ambient state lives at the root
-}
-
-function step(model, inputs, feedback) {
-  // 1. determine firing: threshold crossing, or a stochastic roll for
-  //    designated spontaneous (pacemaker) neurons
-  // 2. deliver only what was scheduled to ARRIVE this tick (a ring buffer
-  //    of delayed drive, not instantaneous same-tick delivery)
-  // 3. leaky integrate-and-fire state update; homeostasis nudges threshold
-  // 4. continuous STDP: decay every eligibility trace, then add
-  //    potentiation/depression from this tick's spike-timing coincidences
-  // 5. ambient neuromodulator decays, then this tick's `feedback` is added
-  // 6. consolidation: weight change = eligibility * (hebbianRate +
-  //    modulatoryRate * ambientModulator) -- see Section 4
-  // 7. rare structural plasticity: sustained eligibility can grow a new
-  //    connection; long quiescence can prune an existing one
-  // 8. clamp external sensory inputs (the one forced exception, as always)
-  return newModel;  // never mutates its input
-}
-```
+**Data structure and interface, unchanged since first introduced**: a model is `{ matrix, vector, factors }` — connections, neurons, and shared ambient state — manipulated through exactly two functions, `create` and `step`, with no separate training call. Real synaptic plasticity is not a mode a neuron enters; it is continuous and intrinsic, so it lives inside `step` itself, running every tick.
 
 ---
 
 ## 3. Algorithms: Dynamics and Plasticity
 
-**Leaky integrate-and-fire** replaces the prior architecture's ungrounded squaring relaxation: a neuron that doesn't fire decays a fraction of the way toward a resting potential every tick, rather than following an ad hoc nonlinearity with no biological analogue.
+**Leaky integrate-and-fire**, with signal delivery on a real, distance-derived conduction delay (minimum one tick — nothing is ever instantaneous), replaced an earlier, biologically ungrounded relaxation rule.
 
-**Rate-coded readout, not raw membrane state.** Every prior XNN experiment read a neuron's continuous pre-spike value directly for decisions — privileged information no real downstream neuron or electrode has access to. OXNN decodes from an exponentially-weighted recent spike count instead, the simplest of three real candidate codes (rate, first-spike/latency, population synchrony); rate coding was chosen for tractability, not because it is confirmed to be how real tissue decodes, and remains the least-tested design choice in this paper.
+**Continuous STDP** maintains a signed, per-connection eligibility trace: potentiation when the presynaptic neuron fired shortly before the postsynaptic one, depression in reverse order.
 
-**Continuous STDP** maintains a signed, per-connection eligibility trace: potentiation when the presynaptic neuron fired shortly before the postsynaptic one, depression in the reverse order, both weighted by an exponential kernel in the time gap and decaying continuously otherwise.
-
-**The dual-pathway consolidation fix.** The first working version gated all weight change through a single term, `consolidationRate * ambientModulator * eligibility` — meaning that with no ambient feedback delivered, weight change was **exactly zero regardless of eligibility**, confirmed directly by feeding the network strongly correlated input with feedback held at zero throughout: eligibility built up genuinely (max 0.86) while not one connection's weight moved. This is a real problem for the stated goal: purely cortical tissue (DishBrain's actual preparation) has no intrinsic dopaminergic source at all — three-factor, reward-gated plasticity is a real and specific mechanism (well-established at corticostriatal synapses), but assuming it as freely available everywhere doesn't hold for a purely cortical system. The fix splits consolidation into two independently-tunable, additive rates:
+**The dual-pathway consolidation fix.** An early version gated all weight change through a single term multiplying eligibility by an ambient neuromodulator level — meaning weight change was *exactly* zero with no ambient feedback delivered, confirmed directly: eligibility built genuinely (0.86) while not one connection moved. This mattered specifically because purely cortical tissue has no intrinsic dopaminergic source at all. The fix splits consolidation into two additive rates:
 
 ```
 delta = eligibility * (hebbianRate + modulatoryRate * ambientModulator)
 ```
 
-`hebbianRate` is always-on, pattern-driven learning; `modulatoryRate` scales an additional reward-amplified boost on top. Verified directly on an isolated two-neuron connection: weight climbed steadily from 0.2 to saturation purely from repeated pre-then-post firing, **with feedback held at exactly zero for the entire run** (67 repetitions to saturate), while adding periodic reward pulses on top reduced that to 4 repetitions — confirming both pathways operate simultaneously and genuinely add together, rather than one silently overriding the other.
-
-Fixing this also surfaced a second, related bug: structural pruning had been keyed on *whether a weight update fired*, which — under the old single-gated formula — meant every connection looked permanently "unconsolidated" whenever feedback was absent, regardless of its real activity. The fix decouples pruning eligibility from consolidation entirely, tracking genuine eligibility quiescence (`lastActive`) instead.
+Verified on an isolated connection: weight climbed from 0.2 to saturation from repeated correlated firing alone, feedback held at exactly zero (67 repetitions to saturate; periodic reward on top reduced this to 4) — both pathways genuinely add, neither silently overrides the other.
 
 ---
 
 ## 4. Calibrating the Substrate: Criticality
 
-A specific, checkable signature of healthy cortical (and organoid) dynamics exists in the literature: spontaneous activity organizes into cascades — "neuronal avalanches" — whose size distribution follows a power law with exponent near **−1.5** (Beggs & Plenz, 2003, extensively replicated since). This gives OXNN's spontaneous dynamics a real target to calibrate against, rather than an arbitrary "looks plausible" parameterization.
+Spontaneous cortical activity organizes into cascades ("neuronal avalanches") whose size distribution follows a power law with exponent near **−1.5** (Beggs & Plenz, 2003). The naive default (connection probability 0.5) was deeply supercritical (runaway, no power law at all); a much sparser setting (0.15) was subcritical (exponent −2.4 to −3.0, too steep). Bracketing the transition empirically landed on **0.25** as the closest approach found (exponent ≈ −1.1) — real, if imperfect, and still requiring deliberate external tuning rather than the self-organization believed to produce this in real tissue.
 
-The naive default (connection probability 0.5) produced deeply **supercritical** dynamics: avalanches spanning nearly the entire simulation, no power-law signature at all. A much sparser setting (0.15) was **subcritical**: avalanches died out too fast (exponent −2.4 to −3.0, steeper than the real target). Bracketing this transition empirically:
+---
 
-| Connection probability | Mean avalanche size | Fitted exponent |
+## 5. A Methodological Pivot: From Task Performance to Dynamical Fidelity
+
+Section 6 documents our first real test of OXNN: an attempt to replicate DishBrain, evaluated by whether the network learned a *behavior*. That attempt produced a clean negative result — genuinely useful, but only after it was complete did the deeper problem become clear: **we had spent the entire prior phase building network-level mechanisms (topology, plasticity, criticality) on top of a single-neuron model that had never once been checked against real single-cell electrophysiology.** Success had been implicitly defined as "does the network do something interesting," when the more foundational, more honest question — for a substrate whose whole premise is biological resemblance — is "does it behave like real neural tissue at all, starting from the single cell."
+
+We adopted that as the standard going forward: reproduce known biological dynamics as faithfully as possible, at minimal computational abstraction (dynamical-systems variables, not literal channel or molecular simulation), working bottom-up from one neuron before asking anything of a network. Task learning is not abandoned — it remains the eventual integration point once a dynamically faithful substrate exists — but it is no longer the metric this branch is judged against. Section 6 is reported in full because the negative result and the mechanism behind it were real and instructive; Sections 7–9 are the work this pivot actually produced.
+
+---
+
+## 6. An Early Test Under the Prior Framing: DishBrain
+
+DishBrain (Kagan et al., 2022) taught living cortical neurons to play Pong using no reward signal — a hit delivered structured, predictable stimulation; a miss delivered unpredictable noise; the free-energy-principle claim (Friston et al.) being that biological networks intrinsically minimize surprise and self-organize toward whichever action produces it. Our minimal recreation used two competing "motor" pools whose relative activity chose a trial's outcome, with ambient feedback held at exactly zero throughout.
+
+**The result was negative, and cleanly so.** A promising-looking initial sweep (14/20 seeds shifting toward the predictable pool) traced to a connectivity confound — the pathway meant to drive the effect was structurally near-absent in the very seeds showing it — and vanished once fixed (9/20, below chance). What replaced it was a **winner-take-all collapse pathology**, the third independent appearance of this exact failure mode in this research program, under a mechanism (pure STDP) unrelated to either prior instance — strong evidence it is a structural property of self-reinforcing recurrent dynamics generally. A systematic search across eight regulatory mechanisms found lateral inhibition reliably made it *worse* at every strength tested (mutual inhibition is the textbook mechanism for *creating* decisive winner-take-all dynamics, not suppressing them), while synaptic scaling was the one fix that generalized correctly across network sizes without collapsing differently at scale — genuinely useful, transferable findings, even though no configuration ever produced credible learning. This consistent, mechanistically-explicable pattern of negative results, more than any single number, is what motivated Section 5's pivot.
+
+---
+
+## 7. Single-Cell Validation: Finding the Wrong Kind of Irregularity
+
+Real cortical neurons fire irregularly at high rates — interspike-interval coefficient of variation (CV) near 1, close to Poisson — and Softky & Koch's (1993) central, well-replicated finding is that **plain leaky-integrate-fire, driven by steady input, fails to reproduce this: it fires too regularly.**
+
+Measured directly on OXNN's spontaneous dynamics: **CV = 2.03 overall.** The opposite failure. Splitting by neuron type isolated the cause precisely: designated pacemaker neurons (independent stochastic firing) measured 1.14, close to the real target; ordinary, network-driven neurons measured 2.11. The burstiness was intrinsic to the same cascading, avalanche-style dynamics calibrated for criticality in Section 4 — a real, informative tension between two genuine biological signatures (population-level cascades and individual-neuron regularity) that a network this simple may not satisfy simultaneously without more mechanism.
+
+**Fix: refractory period and spike-frequency adaptation**, added as ordinary abstract state variables (not channel simulation) — a hard minimum interval between spikes, and a slow recovery variable that builds with firing and subtracts from drive. A real methodological trap was caught before trusting the first result: testing "sustained current injection" via a live, plastic synapse let ordinary consolidation quietly erode the test connection's weight mid-run — a real patch-clamp injects current directly, never through a synapse subject to learning. Once isolated correctly (plasticity disabled for single-cell tests only), the mechanism cleanly reproduced two real classes: **Fast-Spiking** (minimal adaptation, sustained near-regular firing) and **Regular-Spiking** (a decelerating transient settling into a stable rate) — but not genuine bursting, for a specific, mechanistic reason: a single linearly-decaying variable settles to a fixed point, not a limit cycle, regardless of parameters.
+
+Re-measured at the network level, this closed most of the gap: **CV = 1.30 overall, 1.33 non-spontaneous** — a real, substantial improvement, not a perfect match.
+
+---
+
+## 8. A Richer Neuron: Izhikevich Dynamics
+
+Genuine bursting needs nonlinear coupling between a fast and slow variable — exactly what Izhikevich's (2003) two-equation reduction of Hodgkin-Huxley biophysics provides, at close to integrate-and-fire computational cost. Added as an **optional per-neuron mode** (`dynamicsModel: 'izhikevich'`), with zero change to any existing LIF neuron, confirmed by full regression.
+
+Tested in isolation (plasticity disabled, one driver neuron, published parameter sets), five distinct, real classes were reproduced cleanly:
+
+| Class | Signature |
+|---|---|
+| Regular Spiking | Short transient, then stable ~33-34 tick period |
+| Fast Spiking | Sustained, minimal adaptation |
+| **Intrinsically Bursting** | **4, 5, 26, 8, 31, 9, 34... — genuine repeating burst-silence cycle** |
+| **Chattering** | **3,3,3,4,4,5,7, 36, [exact repeat] — the same cluster shape recurring precisely** |
+| Low-Threshold Spiking | Smooth, distinct ramp to a moderate steady rate |
+
+The chattering result is close to a textbook confirmation: the *identical* seven-spike cluster shape recurring after each long gap, not merely "sometimes bursty." Two further, real phenomena emerged **without any special-casing**: Regular-Spiking developed a sharper initial burst at higher injected current (a documented current-dependent transition), and chattering became more precisely periodic at weak drive but collapsed to near-continuous firing at strong drive (also independently documented). STDP was verified to work correctly regardless of which dynamics model produced a spike — eligibility tracked genuine, sensible timing correlation from an Izhikevich source, and consolidation applied it with exactly the predicted magnitude.
+
+---
+
+## 9. From Single Cell to Network: Scale, Current, and a Real Tension
+
+Mapping the network's excitatory/inhibitory populations to Izhikevich Regular-/Fast-Spiking (a real, established biological correspondence) first **failed completely**: zero spikes across 142 neurons, membrane potential frozen at rest. The cause was a genuine unit-scale mismatch — our network's weights, calibrated for LIF's [0,1]-bounded drive, were never remotely close to the current magnitude (~10-25) the isolated Izhikevich tests needed. Fixed with an explicit current-scaling factor, defaulting to 1 to exactly preserve every already-validated isolated result (confirmed byte-identical), with a larger, explicitly-passed scale for network contexts.
+
+Once genuinely active, the network told a different, more interesting story than "problem solved":
+
+| Configuration | Overall CV | Active neurons |
 |---|---|---|
-| 0.50 | tens of thousands | ~0 (no power law; runaway) |
-| 0.30 | 8.4 | −0.81 |
-| **0.25** | **4.8** | **−1.10** |
-| 0.22 | 1.7 | −2.83 |
-| 0.15 | 1.6 | −2.9 to −3.0 |
+| Bare LIF | 2.03 | 97/150 |
+| LIF + refractory + adaptation | 1.30 | 126/150 |
+| Izhikevich RS/FS | 0.71 | 46/150 |
+| Izhikevich RS/FS + homeostatic current | **0.47** | **150/150** |
 
-0.25 is the closest approach found — a real, if imperfect, signature (R² ≈ 0.68–0.97 depending on the fit), now used as the module's grounded default. We note honestly that hitting −1.5 exactly likely needs either a finer search or a genuine self-organizing mechanism: real cortical tissue is believed to *tune itself* toward criticality via regulatory processes; OXNN's threshold-based homeostasis does not do this on its own, and every calibration reported here required deliberate external tuning, not emergent self-organization.
-
----
-
-## 5. Toward DishBrain: An Embodied Hello-World
-
-DishBrain's actual mechanism is more specific than "reward for winning": ball position was encoded by which of a small set of fixed electrodes fired; a separate region's activity, read out and mapped to paddle movement; and — the genuinely distinctive part — a **hit** delivered structured, predictable stimulation, while a **miss** delivered unpredictable, randomized stimulation. No reward scalar exists anywhere in the loop. The hypothesis (grounded in the free-energy principle) is that biological networks intrinsically minimize surprise, and will self-organize toward whichever action yields predictability, with no need to be told which outcome is "good."
-
-Our minimal recreation: a sensory population receiving either a fixed, regular pulse or a randomly-timed one (matched for average intensity, differing only in regularity); two competing "motor" pools, whichever more active at the end of a free-running window is that trial's "choice"; a fixed, undisclosed rule (pool A wins → predictable stimulation next; pool B wins → unpredictable) the network must discover through correlation alone, with **ambient feedback held at exactly zero throughout** — testing the `hebbianRate` pathway in isolation, the actual mechanism under test, not a reward-based stand-in for it.
+Adding a homeostatic bias current (the Izhikevich analogue of LIF's threshold homeostasis — necessary since Izhikevich's firing threshold is a fixed biophysical constant, not something that should drift without blurring the class-defining parameters) **completely solved under-activity** (46→150 active neurons) but **pushed CV further from the target, not closer.** This is a real, structural tension, not a tuning failure: homeostatic stabilization is, by definition, variance-reducing — the more effectively it converges every neuron to a target rate, the more regular its firing becomes. Real cortical irregularity is attributed in the literature to fluctuating, noisy synaptic input, not smooth deterministic regulation — precisely the ingredient this substrate does not yet have. That is now a specific, well-posed next step, not an open-ended one.
 
 ---
 
-## 6. Results
+## 10. Discussion
 
-### 6.1 A promising result that did not survive scrutiny
+**The pivot was the right call, and the evidence for that is cumulative, not a single result.** DishBrain's negative outcome was real and well-earned, but the deeper finding was that it was the wrong question for this branch — nothing beneath it had been validated. Once redirected to single-cell fidelity, every subsequent step produced genuine, checkable, often surprising progress: an unexpected failure direction (too bursty, not too regular), a real methodological trap caught before it could contaminate results (plasticity-corrupted current injection), a clean mechanistic explanation for why linear adaptation cannot burst, five real classes reproduced by a richer model, and — most valuably — a genuine, specific tension between two desirable properties (broad activity and biological irregularity) that neither looks like a bug nor resolves itself with more of the same fix.
 
-An initial 20-seed sweep showed 14/20 seeds shifting toward the predictable-associated pool over training (mean shift +0.078) — encouraging, but not statistically significant on its own (t = 1.50). Structural inspection of the specific seeds driving this, comparing one that collapsed to always-B against one showing the strongest positive shift, found **near-zero or literally zero sensory-to-pool connectivity in both** — the very pathway meant to drive the effect was barely present. Re-running with sensory-to-pool connectivity explicitly guaranteed (removing the confound) made the effect **vanish**: 9/20 positive (below chance), mean shift +0.059, t = 0.767. The original result was an artifact of sparse, asymmetric initial wiring, not learning.
+**Where optimism is earned.** The substrate now has real, checkable answers, not assumptions, at the level the whole enterprise depends on: does a single neuron behave like a real one. Two of three major classes were reached with minimal added mechanism; all five tested classes, including genuine bursting, were reached with a still-abstract, still computationally cheap richer model. The one clean open failure (CV under homeostasis) has a specific, literature-grounded candidate fix (noisy input) rather than an unclear one.
 
-### 6.2 A third independent replication of a recurring collapse pathology
-
-Once the confound was removed, a different, more informative pattern emerged: hard, fast, winner-take-all lock-in to one pool, largely independent of the actual environmental contingency. This is the **third** time this exact signature has appeared in this research program — previously in board-game self-play and in a language-timing task, each using an entirely different learning mechanism. Its reappearance here, under pure STDP with no relation to either prior mechanism, is strong convergent evidence that it is a structural property of recurrent, self-reinforcing dynamics generally, not an artifact of any one training rule.
-
-**Diagnosis.** Homeostasis is a slow negative-feedback correction; STDP-driven recurrent self-excitation is a fast positive-feedback loop. Speeding homeostasis up substantially reduced collapse (100% → 60% of seeds, across a systematic learning-rate sweep) but plateaued rather than reaching zero — confirming the mismatch is real and causal, while showing that speed alone is not the whole story.
-
-**A systematic search across proposed fixes**, all tested against the same ten seeds:
-
-| Fix | Collapse rate | Verdict |
-|---|---|---|
-| Fast homeostasis alone | 6/10 | Partial, plateaus |
-| Lateral inhibition (−0.05 to −0.3, three strengths) | 9–10/10 | **Worse at every strength** |
-| Periodic perturbation of the losing pool | 7/10 | No improvement |
-| Per-connection weight cap (0.15) | 3/10 (best raw rate) | Collapse↓, but late-stage choice frequency flat at chance (0.474, not different from 0.5) — suppresses commitment, not learning |
-| Synaptic scaling (aggregate weight budget, not per-connection) | 3–4/10, **consistent across pool sizes 3 and 20** | Genuinely scale-invariant fix; still no learning signal |
-| Richer, sequential (non-synchronized) stimulus pattern | 3/10 at small scale; **8/10 at larger scale — worse** | No improvement; possibly harmful at scale |
-| Fast activity-dependent damping | 4–7/10 | No improvement, sometimes worse |
-| Dedicated inhibitory homeostatic plasticity (Vogels et al., 2011-style) | 4–5/10 | No improvement |
-| Both combined | 7–8/10 | **Worse than either alone** |
-
-Lateral inhibition's failure is itself a genuine, transferable finding: mutual inhibition between competing populations is the textbook mechanism for *creating* sharp, decisive winner-take-all dynamics in computational neuroscience, not suppressing them — the intuition that "real competitive circuits use inhibition, so inhibition should help" has the causal direction backwards for this specific failure mode.
-
-### 6.3 Scale does not rescue the effect, and can actively break a working fix
-
-Repeating the collapse test with pools 6.7× larger (3 → 20 neurons per pool), holding every other setting fixed, produced **no meaningful improvement** (10/10 → 9/10 collapsed) — directly ruling out "insufficient averaging in a small population" as the explanation. More strikingly, the one partial fix that worked at small scale (the per-connection weight cap) got **worse**, not better, at the larger size (3/10 → 6/10) — because a fixed per-connection ceiling does not bound the *aggregate* recurrent drive a neuron receives, which grows with the number of contributing connections. Synaptic scaling (capping the total incoming weight budget, not each connection) was built specifically to correct this, and did hold constant across both scales tested — a real methodological lesson: a fix validated at one network size cannot be assumed to transfer to another without checking whether it depends on aggregate, not per-unit, quantities.
-
-### 6.4 A clean, final negative result
-
-Across every configuration in Sections 6.2–6.3 — two pool sizes, two stimulus designs, and roughly eight distinct regulatory mechanisms and their combinations — **not one produced a statistically credible predictability-tracking learning signal.** The best late-stage win rate found (with the collapse-suppressing weight cap) was statistically indistinguishable from chance. Every apparent positive result traced back either to a connectivity confound or to which direction a pathological collapse happened to lock, never to gradual, genuine tracking of the environment's actual structure.
+**Where it isn't yet.** No configuration has matched the Softky-Koch target closely; firing-rate distribution shape and small-world topology remain entirely unmeasured; genuinely sparse storage (required for any real approach to biological scale) does not exist yet; and the DishBrain question itself — now understood to depend on a foundation this phase spent its effort building rather than assuming — remains formally unanswered, deferred rather than resolved.
 
 ---
 
-## 7. Discussion
+## 11. Limitations
 
-**What this phase genuinely establishes.** A working, biologically-grounded local-plasticity engine that provably learns from input pattern alone, with zero reward signal — verified directly and cleanly, independent of everything that follows. A substrate calibrated against a real, checkable neuroscience target (avalanche criticality) rather than an invented one. A precisely diagnosed, third-replicated instability, now understood mechanistically (a timescale mismatch between fast Hebbian reinforcement and slow homeostatic correction) even though not yet solved. And a decisive ruling-out of at least two plausible-sounding fixes (lateral inhibition at any tested strength; naive per-connection weight capping at scale) — valuable specifically because it prevents wasted future effort chasing either.
-
-**What remains open, honestly.** The actual target phenomenon — DishBrain's predictability-driven learning — has not been reproduced at any scale or configuration tested. We do not believe this is for lack of trying reasonable fixes; the negative results are consistent and mechanistically explicable, not scattered or ambiguous. Two live, separable hypotheses remain: that genuine predictive-coding computation (an explicit internal expectation, compared against outcome) is structurally necessary and STDP correlation alone cannot approximate it; or that real scale and continuous, uninterrupted operation — DishBrain's ~800,000 neurons operating with no discrete trial structure at all, against our tested maximum of 120 across explicit trial windows — matter in a way no amount of clever calibration at our current scale can substitute for.
-
-**Why this is a genuinely optimistic outcome, not a discouraging one.** Every negative result in Section 6 narrowed the hypothesis space concretely rather than leaving it open-ended — we know inhibition is the wrong lever, we know naive capping doesn't generalize across scale, we know it isn't simply a small-N artifact. That is real, cumulative progress on a hard question, even though the headline result is negative. The substrate itself is validated and ready; what's left is two clearly-stated, independently pursuable next questions, not an open-ended search.
-
----
-
-## 8. Limitations
-
-- All experiments used at most 120 neurons, against DishBrain's ~800,000 — several orders of magnitude below the scale of the actual benchmark, and this gap has not itself been shown to be irrelevant.
-- Criticality calibration is approximate (exponent ≈ −1.1 against a target of −1.5) and was achieved through manual parameter search, not a self-organizing mechanism, unlike (believed) real cortical tissue.
-- The storage backend remains dense in memory (N² even though sparse in structural meaning), which is a real, near-term ceiling on how far scale can practically be pushed with this implementation.
-- Collapse-pathology and DishBrain-replication results are drawn from 10–20 seeds per condition; while the consistency of null results across many structurally different conditions makes a hidden real effect unlikely, individual condition estimates carry real sampling uncertainty.
-- No glial representation, no multi-neuromodulator diversity beyond a single ambient channel, no short-term synaptic plasticity, and no dendritic computation — all flagged as open gaps between OXNN and real tissue, none addressed in this phase.
-- The free-energy-principle mechanism itself was approximated through raw STDP correlation rather than any explicit predictive or generative computation; this substitution is the paper's own leading hypothesis for the negative result, not a settled fact.
+- All network-scale results use at most 150 neurons; single-cell classification claims are qualitative matches to published parameter sets, not verified against exact quantitative spike-train data from a specific paper.
+- Izhikevich-mode neurons currently have no equivalent of LIF's stochastic pacemaker mechanism.
+- Criticality calibration (Section 4) predates every mechanism in Sections 7–9 and has not been re-verified against the current, richer neuron models.
+- Firing-rate distribution shape and small-world connectivity structure — both real, checkable, already-identified targets — remain completely unmeasured.
+- The storage backend remains dense in memory; genuine biological scale is not currently reachable regardless of any other fix.
+- The CV-versus-activity tension (Section 9) is diagnosed, not resolved; noise injection is a well-motivated hypothesis, not yet built or tested.
 
 ---
 
-## 9. Conclusion and Future Work
+## 12. Conclusion and Future Work
 
-OXNN is a real, working answer to "can an XNN be made to structurally and dynamically resemble organic neural tissue" — spatially grounded, Dale's-Law-respecting, spiking, criticality-calibrated, and capable of genuine unsupervised learning from pattern alone. It is not yet a working answer to "does this produce DishBrain's specific behavior," and this paper's contribution is converting that from an open-ended question into two concrete ones:
+This phase's real result is not a number — it is the discovery that the right question for OXNN was never "can it learn," but "does it behave like real neural tissue, from the single cell up." Every finding that followed from asking the right question was concrete, checkable, and, taken together, points toward specific, tractable next work rather than an open-ended search:
 
-1. **Build genuine predictive coding** — an explicit internal expectation and prediction-error signal, not an implicit hope that spike-timing correlation approximates one — as its own dedicated mechanism, tested in isolation before being layered onto anything else.
-2. **Invest in a genuinely sparse storage backend** before attempting a large scale-up, so that an order-of-magnitude (or more) increase in network size is a real, tractable experiment rather than an aspiration, and re-test the same hello-world at that scale once it is.
+1. **Inject fluctuating, noisy synaptic drive**, the literature's own explanation for real cortical irregularity, as the direct test of Section 9's diagnosed tension.
+2. **Measure firing-rate distribution and small-world topology** — cheap, already-identified, entirely unmeasured targets.
+3. **Re-verify avalanche criticality** against the current, richer neuron models before trusting Section 4's calibration further.
+4. **Build genuinely sparse storage**, the prerequisite for any real attempt at biological scale.
+5. Only once a dynamically faithful substrate exists, **return to task learning** — DishBrain included — as originally intended, on a foundation actually built to support it.
 
-Either path is well-defined, buildable, and directly motivated by evidence gathered here rather than speculation. That is the right place for this phase to end: not at the result we hoped for, but at a substantially clearer map of exactly what stands between here and it.
+The negative result that began this phase and the positive results that followed it are the same story: asking a more honest question produced better answers. That is the right note for a computational biology program to end a chapter on.
