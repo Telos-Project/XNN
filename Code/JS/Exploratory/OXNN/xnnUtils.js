@@ -43,20 +43,28 @@
  *     variation (CV) near 1 at high rates, close to a Poisson process
  *     (Softky & Koch 1993) -- and, critically, the paper's own central
  *     finding is that PLAIN leaky-integrate-fire with steady input FAILS
- *     to reproduce this (fires too regularly). Measured directly on this
- *     module: bare threshold-crossing LIF gave CV ~2.0 (too BURSTY, the
- *     opposite failure direction, traced to the avalanche-style cascading
- *     dynamics themselves); adding refractory period + adaptation brought
- *     it to ~1.3; an Izhikevich RS/FS network, once properly current-scaled,
- *     came in at ~0.65-0.71 (too REGULAR once genuinely active) and further
- *     homeostatic regulation pushed it lower still (~0.45-0.47) -- strong
- *     homeostatic stabilization and high moment-to-moment irregularity are
- *     in real, structural tension (homeostasis IS a variance-reducing
- *     mechanism, by construction). No configuration tested yet reproduces
- *     the target cleanly; the literature's own explanation for real
- *     irregularity is fluctuating/noisy synaptic input, not smooth
- *     regulation, which this module does not yet inject -- open question,
- *     not resolved.
+ *     to reproduce this (fires too regularly). History of measurements on
+ *     this module: bare threshold-crossing LIF gave CV ~2.0 (too bursty,
+ *     traced to avalanche-style cascading dynamics); refractory period +
+ *     adaptation brought it to ~1.3; re-measured after the criticality
+ *     recalibration below, the SAME LIF+adaptation network measured ~1.06
+ *     with zero noise added -- a large, incidental improvement from fixing
+ *     an unrelated parameter, worth remembering when calibrating one
+ *     target can silently move another. An Izhikevich RS/FS network with
+ *     homeostatic current (see homeostaticCurrent below) solved network-
+ *     wide silence but measured CV ~0.45-0.53 -- too regular -- because
+ *     homeostatic stabilization is definitionally variance-reducing.
+ *     RESOLVED (substantially): adding genuine stochastic fluctuation to
+ *     injected current, independent of the deterministic homeostatic bias
+ *     (see noiseAmplitude below), closed most of this gap directly --
+ *     CV ~0.93 at the best-found noise amplitude, WHILE fully preserving
+ *     the activity fix (150/150 neurons stayed active across the entire
+ *     tested noise range) -- confirming the literature's own explanation
+ *     (fluctuating synaptic input, not smoother regulation) directly,
+ *     rather than just plausibly. Not an exact match, and the relationship
+ *     is non-monotonic (CV declines again well past the best-found
+ *     amplitude) -- the right noise scale must be found per context, the
+ *     same way izhikevichCurrentScale must be.
  *   - Firing-rate distribution shape and small-world topological structure
  *     (clustering, path length) are both real, checkable published targets
  *     that have not yet been measured against this substrate at all.
@@ -284,6 +292,16 @@ function distance(a, b) {
   return Math.sqrt(sum);
 }
 
+// Box-Muller transform: two uniform draws -> one approximately-Gaussian
+// sample. Real synaptic bombardment noise is commonly modeled as
+// approximately Gaussian (diffusion approximation of many small Poisson
+// inputs summing), so this is the natural choice over uniform noise.
+function gaussianNoise(nextRandom) {
+  const u1 = Math.max(nextRandom(), 1e-10); // avoid log(0)
+  const u2 = nextRandom();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
 // ---------------------------------------------------------------------------
 // create
 // ---------------------------------------------------------------------------
@@ -320,17 +338,21 @@ function create(n, options = {}) {
     spaceSize = 10,
     excitatoryFraction = 0.8, // Braitenberg & Schuz 1998; canonical cortical E/I ratio
     connectionDecayLength = 3,
-    baseConnectionProb = 0.25, // EMPIRICALLY CALIBRATED, not a guess: the
-    // earlier default of 0.5 produced deeply supercritical, runaway
-    // spontaneous activity (avalanches spanning nearly the whole
-    // simulation, no power-law signature); 0.15 was subcritical (avalanches
-    // die out too fast, exponent -2.4 to -3.0 vs the real target of -1.5,
-    // Beggs & Plenz 2003). 0.25 was the closest approach found to that
-    // target during calibration (exponent ~-1.1; see analyze-avalanches.js)
-    // -- still an approximation, not an exact match. See that script's
-    // notes on why hitting -1.5 precisely likely needs either a finer
-    // search or a genuine self-organizing mechanism, which this network
-    // does not yet have.
+    baseConnectionProb = 0.245, // RE-CALIBRATED (see conversation): the
+    // original calibration (0.25, exponent ~-1.1) was measured on the bare
+    // threshold-crossing neuron, BEFORE refractory period and spike-
+    // frequency adaptation existed. Re-checking against the current, richer
+    // neuron model found real drift: 0.25 now measures exponent ~-0.47
+    // (supercritical -- refractory gating forces cascades to spread across
+    // MORE neurons to sustain themselves, apparently pushing avalanches
+    // larger, not smaller). The critical transition is also much NARROWER
+    // now than before (0.24 subcritical at -2.05, 0.25 supercritical at
+    // -0.47 -- almost the whole usable range within 0.01). 0.245 was the
+    // closest re-calibrated approach found (exponent ~-1.59, target -1.5,
+    // Beggs & Plenz 2003) -- tighter than the original approximation, but
+    // still not exact, and still requires deliberate external tuning
+    // rather than genuine self-organization. Re-verify again after any
+    // further change to single-neuron dynamics (e.g. noise injection).
     maxWeight = 1,
     inhibitoryWeightScale = 2, // inhibitory synapses modeled as several-fold stronger
     // than excitatory in balanced-network literature (up to ~8x); 2x used
@@ -493,6 +515,18 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     // much larger than LIF's homeostaticLr (0.002) because Izhikevich's
     // current scale (units of ~10s) is far larger than LIF's threshold
     // scale (bounded to [0.3, 1.0]) -- these are not directly comparable rates.
+    noiseAmplitude = 0, // DEFAULT IS 0 -- no change to any existing result
+    // unless explicitly enabled, same backward-compatibility discipline as
+    // izhikevichCurrentScale. Genuine per-tick stochastic fluctuation, added
+    // to drive INDEPENDENTLY of the deterministic homeostatic bias --
+    // testing the literature's actual explanation for real cortical ISI
+    // irregularity (fluctuating synaptic bombardment, not smooth
+    // regulation), which the homeostatic mechanisms alone cannot provide
+    // (they are definitionally variance-reducing; see conversation).
+    // Same units as `incoming` for LIF neurons; same units as injected
+    // current (post izhikevichCurrentScale) for Izhikevich neurons -- the
+    // two are NOT on the same numeric scale, matching the same reasoning
+    // that made izhikevichCurrentScale a separate parameter.
   } = options;
 
   const n = model.vector.length;
@@ -527,7 +561,7 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
   const fired = model.vector.map((neuron, i) => {
     const f = neuron.factors;
     if (f.dynamicsModel === "izhikevich") {
-      const I = incoming[i] * izhikevichCurrentScale + f.homeostaticCurrent;
+      const I = incoming[i] * izhikevichCurrentScale + f.homeostaticCurrent + gaussianNoise(nextRandom) * noiseAmplitude;
       let v = f.v, u = f.u;
       const dv = 0.04 * v * v + 5 * v + 140 - u + I;
       v = v + dv;
@@ -579,7 +613,7 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     const baseline = fired[i]
       ? f.restingPotential
       : model.vector[i].state + f.leakRate * (f.restingPotential - model.vector[i].state);
-    newState[i] = clip(baseline + incoming[i] - f.adaptation, 0, 1);
+    newState[i] = clip(baseline + incoming[i] - f.adaptation + gaussianNoise(nextRandom) * noiseAmplitude, 0, 1);
   }
 
   // 4. Homeostasis adjusts THRESHOLD now, not an additive bias -- and spike

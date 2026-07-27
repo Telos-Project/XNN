@@ -2,7 +2,7 @@
 
 ## Abstract
 
-Cross Neural Networks (XNNs) are fully-recurrent, continuously-operating neural graphs trained without backpropagation, proposed as a substrate closer to organic cognition than conventional deep learning. This paper documents a phase of research that took that proposal literally, rebuilding the architecture around real neuroscience — **OXNN (Organic XNN)** — and, in doing so, learned something that reshaped the whole research program: task performance was the wrong success criterion for this branch entirely. An early attempt to replicate DishBrain (Kagan et al., 2022), the experiment in which living cortical neurons learned Pong from stimulation predictability rather than reward, produced a clean, decisive negative result after ruling out a real confound and a genuine, recurring instability — valuable knowledge, but knowledge that pointed at the wrong target. We pivoted: from "can this learn a task" to "does this reproduce known biological dynamics, built bottom-up from the single cell, at minimal computational abstraction." That pivot paid off immediately and then compounded. Working from a single, specific literature target (Softky & Koch's 1993 finding that plain integrate-and-fire neurons fire too regularly compared to real cortex), we found our own substrate had the *opposite* problem — pathologically bursty — diagnosed why, and closed most of the gap with refractory and adaptation dynamics. Adding a full Izhikevich (2003) neuron as an optional per-neuron mode reproduced five distinct, real cortical firing classes, including genuine bursting our simpler mechanism structurally could not reach. Scaling this to a full network surfaced a real unit-scale bug, then a genuine tension: the same homeostatic regulation that fixed network-wide silence also suppressed the biological irregularity we were chasing. Rather than leave that open, we closed it: re-verifying our earlier criticality calibration against the richer neuron models found it had quietly drifted, and re-calibrating incidentally improved the irregularity problem too; injecting genuine stochastic fluctuation into neural drive — the literature's own explanation for real cortical irregularity, never previously tested here — then closed most of the remaining gap directly, while fully preserving network-wide activity. Every step here, including the DishBrain result that started it, turned real uncertainty into a specific, well-posed, and increasingly answered question — which is the only standard this kind of research should be held to.
+Cross Neural Networks (XNNs) are fully-recurrent, continuously-operating neural graphs trained without backpropagation, proposed as a substrate closer to organic cognition than conventional deep learning. This paper documents a phase of research that took that proposal literally, rebuilding the architecture around real neuroscience — **OXNN (Organic XNN)** — and, in doing so, learned something that reshaped the whole research program: task performance was the wrong success criterion for this branch entirely. An early attempt to replicate DishBrain (Kagan et al., 2022), the experiment in which living cortical neurons learned Pong from stimulation predictability rather than reward, produced a clean, decisive negative result after ruling out a real confound and a genuine, recurring instability — valuable knowledge, but knowledge that pointed at the wrong target. We pivoted: from "can this learn a task" to "does this reproduce known biological dynamics, built bottom-up from the single cell, at minimal computational abstraction." That pivot paid off immediately. Working from a single, specific, checkable literature target (Softky & Koch's 1993 finding that plain integrate-and-fire neurons fire too regularly compared to real cortex), we found our own substrate had the *opposite* problem — pathologically bursty, not regular — diagnosed why, and closed most of the gap with biologically-motivated refractory and adaptation dynamics. Adding a full Izhikevich (2003) neuron as an optional per-neuron mode reproduced five distinct, real cortical firing classes from published parameter sets, including genuine bursting our simpler mechanism structurally could not reach. Scaling this to a full network surfaced a real unit-scale bug, then a genuine, informative tension: the same homeostatic regulation that fixed network-wide silence also actively suppresses the biological irregularity we were chasing. Every step here — including the DishBrain result that started it — narrowed real uncertainty into a specific, well-posed next question, which is the only standard this kind of research should be held to.
 
 ---
 
@@ -50,7 +50,7 @@ Verified on an isolated connection: weight climbed from 0.2 to saturation from r
 
 ## 4. Calibrating the Substrate: Criticality
 
-Spontaneous cortical activity organizes into cascades ("neuronal avalanches") whose size distribution follows a power law with exponent near **−1.5** (Beggs & Plenz, 2003). The naive default (connection probability 0.5) was deeply supercritical (runaway, no power law at all); a much sparser setting (0.15) was subcritical (exponent −2.4 to −3.0, too steep). Bracketing the transition empirically landed on **0.25** as the closest approach found (exponent ≈ −1.1) — real, if imperfect, and still requiring deliberate external tuning rather than the self-organization believed to produce this in real tissue. This calibration was measured on the neuron model as it existed at this point in the research; Section 9 revisits and corrects it once that model changed.
+Spontaneous cortical activity organizes into cascades ("neuronal avalanches") whose size distribution follows a power law with exponent near **−1.5** (Beggs & Plenz, 2003). The naive default (connection probability 0.5) was deeply supercritical (runaway, no power law at all); a much sparser setting (0.15) was subcritical (exponent −2.4 to −3.0, too steep). Bracketing the transition empirically landed on **0.25** as the closest approach found (exponent ≈ −1.1) — real, if imperfect, and still requiring deliberate external tuning rather than the self-organization believed to produce this in real tissue.
 
 ---
 
@@ -100,7 +100,7 @@ The chattering result is close to a textbook confirmation: the *identical* seven
 
 ---
 
-## 9. From Single Cell to Network: A Real Tension, and Its Resolution
+## 9. From Single Cell to Network: Scale, Current, and a Real Tension
 
 Mapping the network's excitatory/inhibitory populations to Izhikevich Regular-/Fast-Spiking (a real, established biological correspondence) first **failed completely**: zero spikes across 142 neurons, membrane potential frozen at rest. The cause was a genuine unit-scale mismatch — our network's weights, calibrated for LIF's [0,1]-bounded drive, were never remotely close to the current magnitude (~10-25) the isolated Izhikevich tests needed. Fixed with an explicit current-scaling factor, defaulting to 1 to exactly preserve every already-validated isolated result (confirmed byte-identical), with a larger, explicitly-passed scale for network contexts.
 
@@ -111,31 +111,19 @@ Once genuinely active, the network told a different, more interesting story than
 | Bare LIF | 2.03 | 97/150 |
 | LIF + refractory + adaptation | 1.30 | 126/150 |
 | Izhikevich RS/FS | 0.71 | 46/150 |
-| Izhikevich RS/FS + homeostatic current | 0.47 | **150/150** |
+| Izhikevich RS/FS + homeostatic current | **0.47** | **150/150** |
 
-Adding a homeostatic bias current (Izhikevich's analogue of LIF's threshold homeostasis — necessary since Izhikevich's firing threshold is a fixed biophysical constant, not something that should drift without blurring the class-defining parameters) **completely solved under-activity** (46→150) but **pushed CV further from the target, not closer.** This is a real, structural tension, not a tuning failure: homeostatic stabilization is, by definition, variance-reducing.
-
-Closing it took two separate steps, not one. First, an overdue check: the criticality calibration (Section 4) predated refractory period, adaptation, and Izhikevich mode entirely, and re-measuring it against the current substrate found real drift — 0.25 now measured exponent **−0.47** (supercritical, not the original −1.1), with the critical transition compressed into a far narrower window than before. Recalibrating found **0.245 → −1.59**, tighter than the original approximation — and, incidentally, brought the LIF network's CV down to **1.06** with no other change at all, a useful reminder that these targets are not independent. Second, the actual hypothesis test: genuine stochastic fluctuation, added to injected drive as an *independent* term alongside (not replacing) the deterministic homeostatic bias — the literature's own explanation for real cortical irregularity, never previously tested here.
-
-| Noise amplitude | CV | Active neurons |
-|---|---|---|
-| 0 | 0.53 | 150/150 |
-| 8 | 0.70 | 150/150 |
-| 16 | 0.90 | 150/150 |
-| **18** | **0.93** | **150/150** |
-| 24 | 0.73 | 150/150 |
-
-Noise closed most of the remaining gap directly, **while fully preserving network-wide activity across the entire tested range** — confirming the literature's explanation rather than merely finding it plausible. The relationship is a real sweet spot, not a monotonic dial (CV declines again well past amplitude 18), and the right scale had to be found per context, the same way current-scaling did. Both fixes are now the module's defaults, verified against every prior single-cell result with zero regression.
+Adding a homeostatic bias current (the Izhikevich analogue of LIF's threshold homeostasis — necessary since Izhikevich's firing threshold is a fixed biophysical constant, not something that should drift without blurring the class-defining parameters) **completely solved under-activity** (46→150 active neurons) but **pushed CV further from the target, not closer.** This is a real, structural tension, not a tuning failure: homeostatic stabilization is, by definition, variance-reducing — the more effectively it converges every neuron to a target rate, the more regular its firing becomes. Real cortical irregularity is attributed in the literature to fluctuating, noisy synaptic input, not smooth deterministic regulation — precisely the ingredient this substrate does not yet have. That is now a specific, well-posed next step, not an open-ended one.
 
 ---
 
 ## 10. Discussion
 
-**The pivot was the right call, and the evidence for that is cumulative, not a single result.** DishBrain's negative outcome was real and well-earned, but the deeper finding was that it was the wrong question for this branch — nothing beneath it had been validated. Once redirected to single-cell fidelity, every subsequent step produced genuine, checkable progress: an unexpected failure direction (too bursty, not too regular), a real methodological trap caught before it could contaminate results, a clean mechanistic explanation for why linear adaptation cannot burst, five real classes reproduced by a richer model, a genuine tension between two desirable properties — and then, distinctively, an actual resolution of that tension rather than a plausible-sounding fix left untested.
+**The pivot was the right call, and the evidence for that is cumulative, not a single result.** DishBrain's negative outcome was real and well-earned, but the deeper finding was that it was the wrong question for this branch — nothing beneath it had been validated. Once redirected to single-cell fidelity, every subsequent step produced genuine, checkable, often surprising progress: an unexpected failure direction (too bursty, not too regular), a real methodological trap caught before it could contaminate results (plasticity-corrupted current injection), a clean mechanistic explanation for why linear adaptation cannot burst, five real classes reproduced by a richer model, and — most valuably — a genuine, specific tension between two desirable properties (broad activity and biological irregularity) that neither looks like a bug nor resolves itself with more of the same fix.
 
-**Where optimism is earned, and it compounds.** The substrate now has real, checkable answers at the level the whole enterprise depends on. Two of three major single-cell classes were reached with minimal added mechanism; all five tested, including genuine bursting, were reached with a still-abstract, still cheap richer model. The one clean open failure from the prior phase — CV suppressed by homeostasis — is now substantially closed, and closed by confirming the literature's actual mechanism directly rather than assuming it would work. The recalibration that helped get there also improved an unrelated result (the LIF network's CV) for free, a real sign the substrate's pieces are coherent with each other rather than independently patched.
+**Where optimism is earned.** The substrate now has real, checkable answers, not assumptions, at the level the whole enterprise depends on: does a single neuron behave like a real one. Two of three major classes were reached with minimal added mechanism; all five tested classes, including genuine bursting, were reached with a still-abstract, still computationally cheap richer model. The one clean open failure (CV under homeostasis) has a specific, literature-grounded candidate fix (noisy input) rather than an unclear one.
 
-**Where it isn't yet.** The Softky-Koch match is close, not exact, and the noise-CV relationship is empirically found, not derived from first principles. Firing-rate distribution shape and small-world topology remain entirely unmeasured; genuinely sparse storage does not exist yet; and DishBrain remains formally unanswered, deferred rather than resolved — now on a foundation this phase spent real effort validating rather than assuming.
+**Where it isn't yet.** No configuration has matched the Softky-Koch target closely; firing-rate distribution shape and small-world topology remain entirely unmeasured; genuinely sparse storage (required for any real approach to biological scale) does not exist yet; and the DishBrain question itself — now understood to depend on a foundation this phase spent its effort building rather than assuming — remains formally unanswered, deferred rather than resolved.
 
 ---
 
@@ -143,21 +131,21 @@ Noise closed most of the remaining gap directly, **while fully preserving networ
 
 - All network-scale results use at most 150 neurons; single-cell classification claims are qualitative matches to published parameter sets, not verified against exact quantitative spike-train data from a specific paper.
 - Izhikevich-mode neurons currently have no equivalent of LIF's stochastic pacemaker mechanism.
-- The noise-CV relationship (Section 9) is characterized empirically across one sweep, not derived; the mechanism behind its non-monotonicity (why irregularity declines again at high amplitude) is not understood, and the right amplitude must be found per network context rather than computed.
+- Criticality calibration (Section 4) predates every mechanism in Sections 7–9 and has not been re-verified against the current, richer neuron models.
 - Firing-rate distribution shape and small-world connectivity structure — both real, checkable, already-identified targets — remain completely unmeasured.
 - The storage backend remains dense in memory; genuine biological scale is not currently reachable regardless of any other fix.
-- Recalibration (Section 9) was re-verified once, after adding refractory/adaptation/Izhikevich mode; it has not been re-checked again since noise injection was added on top, which itself changes spontaneous dynamics.
+- The CV-versus-activity tension (Section 9) is diagnosed, not resolved; noise injection is a well-motivated hypothesis, not yet built or tested.
 
 ---
 
 ## 12. Conclusion and Future Work
 
-This phase's real result is not a number — it is the discovery that the right question for OXNN was never "can it learn," but "does it behave like real neural tissue, from the single cell up," and that asking it produces answers that build on each other. Two items from this phase's own prior future-work list are now done: criticality was re-verified and corrected, and noise injection was built and shown to work. What follows from that:
+This phase's real result is not a number — it is the discovery that the right question for OXNN was never "can it learn," but "does it behave like real neural tissue, from the single cell up." Every finding that followed from asking the right question was concrete, checkable, and, taken together, points toward specific, tractable next work rather than an open-ended search:
 
-1. **Characterize the noise-CV relationship properly** — find why it is non-monotonic, and whether a principled derivation of the right amplitude exists, rather than treating amplitude 18 as a found constant.
-2. **Re-verify criticality once more**, now that noise injection itself changes spontaneous dynamics on top of the mechanisms it was last checked against.
-3. **Measure firing-rate distribution and small-world topology** — cheap, already-identified, still entirely unmeasured targets.
+1. **Inject fluctuating, noisy synaptic drive**, the literature's own explanation for real cortical irregularity, as the direct test of Section 9's diagnosed tension.
+2. **Measure firing-rate distribution and small-world topology** — cheap, already-identified, entirely unmeasured targets.
+3. **Re-verify avalanche criticality** against the current, richer neuron models before trusting Section 4's calibration further.
 4. **Build genuinely sparse storage**, the prerequisite for any real attempt at biological scale.
-5. Only once the substrate is validated this thoroughly at the population level too, **return to task learning** — DishBrain included — as originally intended.
+5. Only once a dynamically faithful substrate exists, **return to task learning** — DishBrain included — as originally intended, on a foundation actually built to support it.
 
 The negative result that began this phase and the positive results that followed it are the same story: asking a more honest question produced better answers. That is the right note for a computational biology program to end a chapter on.
