@@ -321,59 +321,6 @@ function distance(a, b) {
   return Math.sqrt(sum);
 }
 
-// Appends `newNodeFactorsList` (each a full neuron/subunit factors object,
-// already constructed) to matrix/factorsArray/pendingDrive, correctly
-// resizing every existing row and every pendingDrive slot -- the one place
-// in this module where step() can return a model LARGER than it received.
-// Kept as its own isolated, directly-testable function specifically
-// because array resizing is exactly the kind of thing easy to get subtly
-// wrong (an existing row not extended, a pendingDrive slot mismatched in
-// length). `factorsArray` is a BARE array of factors objects (not
-// {state,factors} pairs) -- callers track neuron `state` separately, since
-// step()'s own pipeline already does.
-function appendNodes(matrix, factorsArray, pendingDrive, newNodeFactorsList, existsFn, delayFn, strengthFn) {
-  const oldN = factorsArray.length;
-  const addedN = newNodeFactorsList.length;
-  const newN = oldN + addedN;
-
-  // Extend every EXISTING row with one new (initially non-existent) column
-  // per added node.
-  const newMatrix = matrix.map((row) => {
-    const extendedRow = row.slice();
-    for (let k = 0; k < addedN; k++) {
-      extendedRow.push({ weight: 0, factors: { exists: false, strength: 0, eligibility: 0, lastConsolidated: 0, lastActive: 0, delay: 1 } });
-    }
-    return extendedRow;
-  });
-
-  // New rows: each added node's own outgoing/incoming connections to every
-  // other node (old and new), decided by the same distance-decay rule
-  // create() itself uses, via the supplied existsFn/delayFn/strengthFn.
-  for (let k = 0; k < addedN; k++) {
-    const newIdx = oldN + k;
-    const row = [];
-    for (let j = 0; j < newN; j++) {
-      const exists = existsFn(newIdx, j, newNodeFactorsList[k]);
-      const delay = delayFn(newIdx, j, newNodeFactorsList[k]);
-      const strength = exists ? strengthFn(newIdx, j, newNodeFactorsList[k]) : 0;
-      row.push({ weight: exists ? 1 : 0, factors: { exists, strength, eligibility: 0, lastConsolidated: 0, lastActive: 0, delay } });
-    }
-    newMatrix.push(row);
-    // and this new node's own incoming column on every OTHER row already pushed
-    for (let i = 0; i < newMatrix.length - 1; i++) {
-      const exists = existsFn(i, newIdx, newNodeFactorsList[k]);
-      const delay = delayFn(i, newIdx, newNodeFactorsList[k]);
-      const strength = exists ? strengthFn(i, newIdx, newNodeFactorsList[k]) : 0;
-      newMatrix[i][newIdx] = { weight: exists ? 1 : 0, factors: { exists, strength, eligibility: 0, lastConsolidated: 0, lastActive: 0, delay } };
-    }
-  }
-
-  const newFactorsArray = factorsArray.concat(newNodeFactorsList);
-  const newPendingDrive = pendingDrive.map((slot) => slot.concat(new Array(addedN).fill(0)));
-
-  return { matrix: newMatrix, factorsArray: newFactorsArray, pendingDrive: newPendingDrive };
-}
-
 // Box-Muller transform: two uniform draws -> one approximately-Gaussian
 // sample. Real synaptic bombardment noise is commonly modeled as
 // approximately Gaussian (diffusion approximation of many small Poisson
@@ -491,16 +438,6 @@ function create(n, options = {}) {
         threshold: defaultThreshold,
         avgActivity: targetActivity,
         targetActivity,
-        chronicDeficitTicks: 0, // persistent counter (NOT reset on ordinary
-        // fluctuation): increments only while BOTH chronically under-active
-        // AND homeostasis is already maxed out (threshold at floor for LIF,
-        // homeostaticCurrent at ceiling for Izhikevich) -- i.e. homeostasis
-        // has done everything it can and it still isn't enough. This is
-        // deliberately separate from avgActivity (which moves fast) so a
-        // brief, ordinary dip can never trigger structural node growth --
-        // only a genuinely sustained deficit can. See step()'s node-growth
-        // logic (a rare, rate-limited edge case, tried only after ordinary
-        // connection growth has already been given the chance to help).
         lastSpikeTick: null,
         recentSpikeCount: 0,
         isSpontaneous,
@@ -649,38 +586,6 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     // current (post izhikevichCurrentScale) for Izhikevich neurons -- the
     // two are NOT on the same numeric scale, matching the same reasoning
     // that made izhikevichCurrentScale a separate parameter.
-    chronicDeficitActivityFraction = 0.3, // "under-active" for chronic-deficit
-    // purposes means avgActivity below this fraction of targetActivity
-    nodeGrowthEnabled = false, // DEFAULT IS FALSE -- node growth (adding a
-    // new dendritic subunit or an entire new neuron complex) is a genuine,
-    // structural, array-resizing edge case, tried ONLY after ordinary
-    // connection growth has already had the chance to help, and gated
-    // behind its own explicit flag so no existing model or test is ever
-    // affected unless deliberately opted into.
-    nodeGrowthInterval = 500, // how rarely to even CHECK -- much slower than
-    // ordinary structuralPlasticityInterval (50), since this is a much
-    // more consequential, harder-to-reverse structural change
-    chronicDeficitThreshold = 300, // ticks of SUSTAINED deficit required
-    // before a node is even eligible (on top of the interval above)
-    saturationFraction = 0.85, // a node counts as "saturated" (no room for
-    // ordinary connection growth) once this fraction of its distance-
-    // weighted candidate partners already have a connection to it
-    nodeGrowthProb = 0.1, // probabilistic gate, matching the existing
-    // structural-plasticity pattern -- even meeting every other condition
-    // does not guarantee growth on any given eligible check
-    maxSubunitsPerNeuron = 4, // once a neuron already has this many
-    // subunits, further chronic deficit grows an entirely new neuron
-    // complex nearby instead of yet another subunit on the same soma
-    newComplexSubunitCount = 2, // initial subunit count for a newly grown
-    // neuron complex (grown in, not assembled with a random topology)
-    growthConnectionDecayLength = 3, // matches create()'s
-    // connectionDecayLength default -- governs how a newly grown node's
-    // initial incoming connectivity falls off with distance from existing
-    // candidate partners, the same rule create() itself uses.
-    growthBaseConnectionProb = 0.245, // matches create()'s (recalibrated)
-    // default -- see the header comment on avalanche criticality.
-    growthConductionVelocity = 1, // matches create()'s default
-    growthInhibitoryWeightScale = 2, // matches create()'s default
   } = options;
 
   const n = model.vector.length;
@@ -854,9 +759,6 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
         -15,
         15
       );
-      const izhikevichMaxedOut = f.homeostaticCurrent >= 15 - 1e-6;
-      const izhikevichUnderActive = f.avgActivity < f.targetActivity * chronicDeficitActivityFraction;
-      f.chronicDeficitTicks = izhikevichMaxedOut && izhikevichUnderActive ? f.chronicDeficitTicks + 1 : 0;
       return f;
     }
     f.avgActivity = (1 - activityEmaAlpha) * f.avgActivity + activityEmaAlpha * (fired[i] ? 1 : 0);
@@ -869,13 +771,6 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     f.recentSpikeCount = f.recentSpikeCount * spikeWindowDecay + (fired[i] ? 1 : 0);
     f.adaptation = f.adaptation * (1 - adaptationDecay) + (fired[i] ? adaptationIncrement : 0);
     f.membranePotential = newMembranePotential[i];
-    // Chronic deficit: only accumulates while homeostasis is ALREADY at its
-    // floor (as easy to fire as this mechanism can make it) AND still
-    // meaningfully under-active -- resets instantly otherwise, so only a
-    // genuinely sustained deficit can ever reach the node-growth threshold.
-    const thresholdMaxedOut = f.threshold <= thresholdBounds[0] + 1e-6;
-    const underActive = f.avgActivity < f.targetActivity * chronicDeficitActivityFraction;
-    f.chronicDeficitTicks = thresholdMaxedOut && underActive ? f.chronicDeficitTicks + 1 : 0;
     return f;
   });
 
@@ -987,138 +882,7 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     }
   }
 
-  // 9. Node growth: a genuinely structural, array-resizing edge case --
-  // OFF by default (nodeGrowthEnabled), and even when enabled, checked only
-  // rarely (nodeGrowthInterval, much slower than ordinary
-  // structuralPlasticityInterval). Deliberately tried LAST, after ordinary
-  // connection growth (step 8) has already had every opportunity to
-  // relieve a deficit the cheap way. A neuron only becomes eligible once
-  // its chronicDeficitTicks (accumulated only while homeostasis is ALREADY
-  // maxed out and it is STILL under-active -- see step 4) crosses
-  // chronicDeficitThreshold, AND it is "saturated" (already connected from
-  // most of its distance-weighted candidate partners, meaning ordinary
-  // connection growth has little room left to help). Only the FIRST
-  // eligible neuron found triggers growth on any given check, keeping this
-  // rare by construction rather than relying on the probabilistic gate
-  // alone. What gets grown relieves the SPECIFIC bottleneck detected: a
-  // new dendritic subunit on the same neuron if it has room
-  // (maxSubunitsPerNeuron), or an entirely new neuron complex (soma +
-  // newComplexSubunitCount subunits) placed nearby only once that
-  // neuron's own subunit budget is exhausted too.
-  let grownMatrix = newMatrix;
-  let grownNeuronFactors = newNeuronFactors;
-  let grownState = newState;
-  let grownPendingDrive = pendingDrive;
-
-  if (nodeGrowthEnabled && age % nodeGrowthInterval === 0) {
-    for (let i = 0; i < n; i++) {
-      const f = newNeuronFactors[i];
-      if (f.nodeType !== "neuron") continue;
-      if (f.chronicDeficitTicks < chronicDeficitThreshold) continue;
-
-      let connectedCandidates = 0;
-      let totalCandidates = 0;
-      for (let j = 0; j < n; j++) {
-        if (j === i || newNeuronFactors[j].nodeType !== "neuron") continue;
-        totalCandidates++;
-        if (newMatrix[j][i].factors.exists) connectedCandidates++;
-      }
-      const saturated = totalCandidates > 0 && connectedCandidates / totalCandidates >= saturationFraction;
-      if (!saturated) continue;
-      if (nextRandom() >= nodeGrowthProb) continue;
-
-      // Eligible. Decide what to grow.
-      let existingSubunitCount = 0;
-      for (let j = 0; j < n; j++) {
-        if (newNeuronFactors[j].nodeType === "dendriticSubunit" && newNeuronFactors[j].parentSoma === i) {
-          existingSubunitCount++;
-        }
-      }
-
-      const existFn = (fromIdx, toIdx, newFactors) => {
-        // structural links are handled explicitly below, not through this
-        // distance-decay rule
-        if (fromIdx >= n && toIdx >= n) return false;
-        const fromFactors = fromIdx < n ? newNeuronFactors[fromIdx] : newFactors;
-        const toFactors = toIdx < n ? newNeuronFactors[toIdx] : newFactors;
-        if (fromFactors.nodeType !== "neuron" || toFactors.nodeType === "neuron") return false;
-        // only ordinary neurons feed newly grown subunits, matching every
-        // isolated subunit test so far; never the reverse
-        const d = distance(fromFactors.position, toFactors.position);
-        return nextRandom() < growthBaseConnectionProb * Math.exp(-d / growthConnectionDecayLength);
-      };
-      const delayFn = (fromIdx, toIdx, newFactors) => {
-        const fromFactors = fromIdx < n ? newNeuronFactors[fromIdx] : newFactors;
-        const toFactors = toIdx < n ? newNeuronFactors[toIdx] : newFactors;
-        const d = distance(fromFactors.position, toFactors.position);
-        return Math.max(1, Math.round(d / growthConductionVelocity));
-      };
-      const strengthFn = (fromIdx) => {
-        const fromFactors = fromIdx < n ? newNeuronFactors[fromIdx] : null;
-        if (!fromFactors) return 0;
-        const isExcitatory = fromFactors.type === "excitatory";
-        const magnitude = nextRandom() * maxWeight * (isExcitatory ? 1 : growthInhibitoryWeightScale);
-        return isExcitatory ? magnitude : -magnitude;
-      };
-
-      const parentPosition = f.position;
-      const nearbyPosition = () => parentPosition.map((x) => x + (nextRandom() - 0.5) * 0.5);
-
-      if (existingSubunitCount < maxSubunitsPerNeuron) {
-        // Grow ONE new subunit for this specific, saturated neuron.
-        const subunitFactors = {
-          nodeType: "dendriticSubunit",
-          position: nearbyPosition(),
-          parentSoma: i,
-          subunitThreshold: 0.5,
-          subunitGain: 15,
-        };
-        const appended = appendNodes(grownMatrix, grownNeuronFactors, grownPendingDrive, [subunitFactors], existFn, delayFn, strengthFn);
-        grownMatrix = appended.matrix;
-        grownNeuronFactors = appended.factorsArray;
-        grownState = grownState.concat([0]);
-        grownPendingDrive = appended.pendingDrive;
-        const newIdx = grownNeuronFactors.length - 1;
-        const d = distance(subunitFactors.position, parentPosition);
-        grownMatrix[newIdx][i] = {
-          weight: 1,
-          factors: { exists: true, strength: 1, eligibility: 0, lastConsolidated: age, lastActive: age, delay: Math.max(1, Math.round(d / growthConductionVelocity)), structural: true },
-        };
-      } else {
-        // Subunit budget exhausted -- grow an entire new complex nearby.
-        const newSomaPosition = nearbyPosition();
-        const newFactorsList = [];
-        for (let s = 0; s < newComplexSubunitCount; s++) {
-          newFactorsList.push({ nodeType: "dendriticSubunit", position: nearbyPosition(), parentSoma: -1, subunitThreshold: 0.5, subunitGain: 15 });
-        }
-        newFactorsList.push({
-          nodeType: "neuron", type: nextRandom() < 0.8 ? "excitatory" : "inhibitory", position: newSomaPosition,
-          membranePotential: 0, restingPotential: 0, leakRate: 0.1, threshold: 1,
-          avgActivity: 0.2, targetActivity: 0.2, chronicDeficitTicks: 0, lastSpikeTick: null,
-          recentSpikeCount: 0, isSpontaneous: false, spontaneousRate: 0, refractoryPeriod: 2,
-          adaptation: 0, dynamicsModel: "lif",
-        });
-        const appended = appendNodes(grownMatrix, grownNeuronFactors, grownPendingDrive, newFactorsList, existFn, delayFn, strengthFn);
-        grownMatrix = appended.matrix;
-        grownNeuronFactors = appended.factorsArray;
-        grownState = grownState.concat(new Array(newFactorsList.length).fill(0));
-        grownPendingDrive = appended.pendingDrive;
-        const newSomaIdx = grownNeuronFactors.length - 1;
-        for (let s = 0; s < newComplexSubunitCount; s++) {
-          const subunitIdx = newSomaIdx - newComplexSubunitCount + s;
-          grownNeuronFactors[subunitIdx].parentSoma = newSomaIdx;
-          const d = distance(grownNeuronFactors[subunitIdx].position, newSomaPosition);
-          grownMatrix[subunitIdx][newSomaIdx] = {
-            weight: 1,
-            factors: { exists: true, strength: 1, eligibility: 0, lastConsolidated: age, lastActive: age, delay: Math.max(1, Math.round(d / growthConductionVelocity)), structural: true },
-          };
-        }
-      }
-      break; // only one growth event per eligible check, by construction
-    }
-  }
-
-  // 10. Clamp external sensory inputs -- the one forced exception, applied
+  // 9. Clamp external sensory inputs -- the one forced exception, applied
   // last, overriding whatever the dynamics above computed. CRITICAL: this
   // must write the REAL dynamical variable (factors.membranePotential for
   // LIF, factors.v for Izhikevich), not just the now-cosmetic top-level
@@ -1129,29 +893,29 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
   for (const idxStr of Object.keys(inputs)) {
     const idx = Number(idxStr);
     const value = inputs[idxStr];
-    grownState[idx] = value;
-    if (grownNeuronFactors[idx].dynamicsModel === "izhikevich") {
-      grownNeuronFactors[idx].v = value;
+    newState[idx] = value;
+    if (newNeuronFactors[idx].dynamicsModel === "izhikevich") {
+      newNeuronFactors[idx].v = value;
     } else {
-      grownNeuronFactors[idx].membranePotential = value;
+      newNeuronFactors[idx].membranePotential = value;
     }
   }
 
-  const vector = grownState.map((state, i) => ({ state, factors: grownNeuronFactors[i] }));
+  const vector = newState.map((state, i) => ({ state, factors: newNeuronFactors[i] }));
   const structuralPlasticityRate = Math.max(
     structuralPlasticityFloor,
     model.factors.structuralPlasticityRate * maturityDecayRate
   );
 
   return {
-    matrix: grownMatrix,
+    matrix: newMatrix,
     vector,
     factors: {
       ambientModulator,
       ambientDecay: model.factors.ambientDecay,
       age: age + 1,
       structuralPlasticityRate,
-      pendingDrive: grownPendingDrive,
+      pendingDrive,
       rngState,
     },
   };
