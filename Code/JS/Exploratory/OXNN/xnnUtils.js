@@ -12,6 +12,24 @@
  * reward-prediction-error); and slow structural plasticity (synapse
  * formation/pruning) on top of the fast weight dynamics.
  *
+ * FACTORS-ONLY PHILOSOPHY: every quantity OXNN's own dynamics actually
+ * depend on lives in `factors` -- `weight` (per connection) and `state`
+ * (per neuron) are NOT used internally anywhere in this module. They are
+ * deliberately KEPT in the data model, set to simple binary values (weight:
+ * 1 if a connection exists else 0; state: 1 if a neuron fired this tick
+ * else 0), specifically so other XNN variants built on more traditional
+ * machine-learning conventions -- for which a connection's weight and a
+ * neuron's activation are the load-bearing quantities -- remain
+ * structurally compatible with an OXNN model. The REAL synaptic efficacy
+ * lives in `factors.strength`; the REAL LIF membrane potential lives in
+ * `factors.membranePotential` (Izhikevich-mode neurons use `factors.v`/`u`
+ * instead, already factors-resident since that mode was introduced).
+ * step() only ever touches top-level `weight`/`state` in two places: when a
+ * connection's existence actually changes (creation, or structural growth/
+ * pruning), and when writing this tick's binary fired-indicator for every
+ * neuron -- never as part of ordinary consolidation, drive computation, or
+ * firing determination, all of which read/write `factors` exclusively.
+ *
  * PARAMETER GROUNDING: default constants are set from real published
  * values wherever they exist, not invented and presented as if grounded --
  * each is cited inline. One tick is treated as approximately 1ms of real
@@ -93,21 +111,27 @@
  * answered without changing what it means to ask for it. This has NOT yet
  * been built; current scale is capped at a few hundred neurons.
  *
- *   Connection = { weight: number, factors: {
+ *   Connection = { weight: [0,1] BINARY existence marker only, factors: {
+ *     strength          number, signed -- the REAL synaptic efficacy (what
+ *                        `weight` held directly before this refactor). All
+ *                        internal dynamics (drive computation, consolidation,
+ *                        Dale's Law enforcement) read/write this, never
+ *                        top-level `weight`.
  *     exists            boolean -- structural fact, set by the slow
  *                        structural-plasticity process below, NEVER by
  *                        ordinary consolidation. A connection with
- *                        exists=false always has weight=0 and cannot
- *                        transmit, but still accumulates eligibility --
- *                        sustained correlated activity is what can
- *                        eventually justify a real synapse forming there.
+ *                        exists=false always has weight=0 and strength=0,
+ *                        and cannot transmit, but still accumulates
+ *                        eligibility -- sustained correlated activity is
+ *                        what can eventually justify a real synapse
+ *                        forming there.
  *     eligibility       number, signed -- continuously-decaying STDP
  *                        trace; positive when this connection's pre/post
  *                        timing was potentiation-favorable, negative when
  *                        depression-favorable. Tracked unconditionally,
  *                        regardless of whether consolidation is active.
  *     lastConsolidated  tick of this connection's last non-negligible
- *                        weight change.
+ *                        strength change.
  *     lastActive        tick this connection's |eligibility| last crossed
  *                        a meaningful threshold -- what pruning actually
  *                        keys on. Deliberately SEPARATE from
@@ -122,7 +146,8 @@
  *                        connection is ever instantaneous).
  *   }}
  *
- *   Neuron = { state: [0,1], factors: {
+ *   Neuron = { state: [0,1] BINARY fired-indicator only (1 if fired this
+ *              tick, else 0) -- NOT the real dynamical variable, factors: {
  *     type              'excitatory' | 'inhibitory' (Dale's Law: fixed at
  *                        creation, constrains the SIGN of every one of
  *                        this neuron's existing outgoing weights forever,
@@ -139,10 +164,14 @@
  *                        without restructuring the object.
  *
  *     -- LIF-mode fields --
+ *     membranePotential  the REAL dynamical variable (what top-level
+ *                        `state` held directly before this refactor).
+ *                        Firing determination, the leak, and the threshold
+ *                        comparison all read/write this, never `state`.
  *     restingPotential, leakRate   -- real exponential leak toward rest
  *                        when not firing (replaces an earlier, biologically
  *                        ungrounded squaring relaxation).
- *     threshold          fires when state >= threshold; this is what
+ *     threshold          fires when membranePotential >= threshold; this is what
  *                        homeostasis adjusts for LIF neurons (not an
  *                        additive bias).
  *     refractoryPeriod   ticks after firing during which the neuron cannot
@@ -380,10 +409,18 @@ function create(n, options = {}) {
     const type = nextRandom() < excitatoryFraction ? "excitatory" : "inhibitory";
     const isSpontaneous = nextRandom() < spontaneousFraction;
     vector.push({
-      state: 0,
+      state: 0, // BINARY fired-indicator only (1 if fired this tick, else 0) --
+      // NOT the real dynamical variable. Kept in the data model, alongside
+      // `weight` below, specifically so other XNN variants built on
+      // traditional ML conventions remain structurally compatible; OXNN's
+      // own step() never reads it for internal dynamics, only writes it
+      // for external/compat consumers. See module doc comment.
       factors: {
         type,
         position,
+        membranePotential: 0, // the REAL LIF dynamical variable (what `state`
+        // used to hold directly). Izhikevich-mode neurons use v/u instead
+        // (already factors-resident) and ignore this field entirely.
         restingPotential: 0,
         leakRate: 0.1,
         threshold: defaultThreshold,
@@ -422,13 +459,23 @@ function create(n, options = {}) {
       const prob = baseConnectionProb * Math.exp(-d / connectionDecayLength);
       const exists = nextRandom() < prob;
       const delay = Math.min(maxDelay, Math.max(1, Math.round(d / conductionVelocity)));
-      let weight = 0;
+      let strength = 0;
       if (exists) {
         const isExcitatory = vector[i].factors.type === "excitatory";
         const magnitude = nextRandom() * maxWeight * (isExcitatory ? 1 : inhibitoryWeightScale);
-        weight = isExcitatory ? magnitude : -magnitude;
+        strength = isExcitatory ? magnitude : -magnitude;
       }
-      row.push({ weight, factors: { exists, eligibility: 0, lastConsolidated: 0, lastActive: 0, delay } });
+      // `weight` is BINARY ONLY (1 if exists, 0 if not) -- not the real
+      // synaptic efficacy. Kept in the data model, alongside neuron `state`
+      // above, so other XNN variants built on traditional ML conventions
+      // remain structurally compatible with OXNN models; OXNN's own step()
+      // never reads it for internal dynamics (only factors.strength), and
+      // only writes it when a connection's existence actually changes
+      // (creation here, or structural growth/pruning in step()).
+      row.push({
+        weight: exists ? 1 : 0,
+        factors: { exists, strength, eligibility: 0, lastConsolidated: 0, lastActive: 0, delay },
+      });
     }
     matrix.push(row);
   }
@@ -577,43 +624,43 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     }
     const inRefractory = f.lastSpikeTick != null && age - f.lastSpikeTick < f.refractoryPeriod;
     if (inRefractory) return false;
-    if (neuron.state >= f.threshold) return true;
+    if (f.membranePotential >= f.threshold) return true;
     if (f.isSpontaneous && nextRandom() < f.spontaneousRate) return true;
     return false;
   });
 
-  // 2. Schedule THIS tick's firing for delayed future delivery -- unchanged.
+  // 2. Schedule THIS tick's firing for delayed future delivery -- reads
+  // factors.strength (the real synaptic efficacy), NOT `weight` (which is
+  // now purely a binary existence marker, unused in any internal dynamics).
   for (let i = 0; i < n; i++) {
     if (!fired[i]) continue;
     const row = model.matrix[i];
     for (let j = 0; j < n; j++) {
       if (!row[j].factors.exists) continue;
       const slot = row[j].factors.delay - 1; // delay>=1, slot 0 of `pendingDrive` = next tick
-      if (slot >= 0 && slot < maxDelay) pendingDrive[slot][j] += row[j].weight;
+      if (slot >= 0 && slot < maxDelay) pendingDrive[slot][j] += row[j].factors.strength;
     }
   }
 
-  // 3. Leaky integrate-and-fire state update (replaces the earlier,
-  // biologically-ungrounded squaring relaxation): fired neurons reset to
-  // resting potential; others leak a fraction of the way toward it before
-  // incoming (delayed) drive is added, with spike-frequency ADAPTATION
-  // subtracted as a persistent, slowly-decaying suppressive current --
-  // abstracted from the real slow-potassium mechanism (Izhikevich-style
-  // recovery variable), not a channel-level simulation.
+  // 3. Leaky integrate-and-fire MEMBRANE POTENTIAL update (factors-resident;
+  // replaces the earlier, biologically-ungrounded squaring relaxation):
+  // fired neurons reset to resting potential; others leak a fraction of the
+  // way toward it before incoming (delayed) drive is added, with spike-
+  // frequency ADAPTATION subtracted as a persistent, slowly-decaying
+  // suppressive current -- abstracted from the real slow-potassium
+  // mechanism, not a channel-level simulation. `newState` (top-level) is
+  // computed separately below and is ALWAYS just a binary fired-indicator,
+  // for both dynamics models -- never the real dynamical variable.
+  const newMembranePotential = new Array(n);
   const newState = new Array(n);
   for (let i = 0; i < n; i++) {
     const f = model.vector[i].factors;
-    if (f.dynamicsModel === "izhikevich") {
-      // state mirrors v, normalized to [0,1] purely for external readers
-      // (e.g. rate-coded spike counting reads `fired`, not raw state, so
-      // this is cosmetic/inspectable only, not load-bearing dynamics).
-      newState[i] = clip((izhikevichNext[i].v + 90) / 120, 0, 1);
-      continue;
-    }
+    newState[i] = fired[i] ? 1 : 0;
+    if (f.dynamicsModel === "izhikevich") continue; // real state lives in factors.v/u instead
     const baseline = fired[i]
       ? f.restingPotential
-      : model.vector[i].state + f.leakRate * (f.restingPotential - model.vector[i].state);
-    newState[i] = clip(baseline + incoming[i] - f.adaptation + gaussianNoise(nextRandom) * noiseAmplitude, 0, 1);
+      : f.membranePotential + f.leakRate * (f.restingPotential - f.membranePotential);
+    newMembranePotential[i] = clip(baseline + incoming[i] - f.adaptation + gaussianNoise(nextRandom) * noiseAmplitude, 0, 1);
   }
 
   // 4. Homeostasis adjusts THRESHOLD now, not an additive bias -- and spike
@@ -646,6 +693,7 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     if (fired[i]) f.lastSpikeTick = age;
     f.recentSpikeCount = f.recentSpikeCount * spikeWindowDecay + (fired[i] ? 1 : 0);
     f.adaptation = f.adaptation * (1 - adaptationDecay) + (fired[i] ? adaptationIncrement : 0);
+    f.membranePotential = newMembranePotential[i];
     return f;
   });
 
@@ -699,7 +747,9 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
   // ambient level on top of it. Setting hebbianRate=0 recovers the old,
   // strictly-gated behavior if that's ever wanted. Dale's Law is enforced
   // here too (not just at creation): sign is clamped to match the source
-  // neuron's type, every time.
+  // neuron's type, every time. Updates factors.strength -- the real
+  // synaptic efficacy -- NEVER the top-level `weight`, which stays a pure
+  // existence marker throughout ordinary plasticity.
   for (let i = 0; i < n; i++) {
     const isExcitatory = newNeuronFactors[i].type === "excitatory";
     for (let j = 0; j < n; j++) {
@@ -708,7 +758,9 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
       if (Math.abs(c.factors.eligibility) >= activityThreshold) c.factors.lastActive = age;
       const delta = c.factors.eligibility * (hebbianRate + modulatoryRate * ambientModulator);
       if (Math.abs(delta) < 1e-9) continue;
-      c.weight = isExcitatory ? clip(c.weight + delta, 0, maxWeight) : clip(c.weight + delta, -maxWeight, 0);
+      c.factors.strength = isExcitatory
+        ? clip(c.factors.strength + delta, 0, maxWeight)
+        : clip(c.factors.strength + delta, -maxWeight, 0);
       c.factors.lastConsolidated = age;
     }
   }
@@ -734,22 +786,37 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
         if (!c.factors.exists) {
           if (Math.abs(c.factors.eligibility) >= growthThreshold && nextRandom() < rate * growthProb) {
             c.factors.exists = true;
-            c.weight = isExcitatory ? 0.1 : -0.1;
+            c.weight = 1; // binary existence marker
+            c.factors.strength = isExcitatory ? 0.1 : -0.1; // real synaptic efficacy
             c.factors.lastConsolidated = age;
             c.factors.lastActive = age;
           }
         } else if (age - c.factors.lastActive > pruneAge && nextRandom() < rate * pruneProb) {
           c.factors.exists = false;
           c.weight = 0;
+          c.factors.strength = 0;
         }
       }
     }
   }
 
   // 9. Clamp external sensory inputs -- the one forced exception, applied
-  // last, overriding whatever the dynamics above computed.
+  // last, overriding whatever the dynamics above computed. CRITICAL: this
+  // must write the REAL dynamical variable (factors.membranePotential for
+  // LIF, factors.v for Izhikevich), not just the now-cosmetic top-level
+  // `state` -- otherwise firing determination on the NEXT tick would read
+  // membranePotential/v (unaffected by the clamp) and silently ignore
+  // clamped sensory input entirely. `state` is still set too, for
+  // consistency/compat, but it no longer drives anything internally.
   for (const idxStr of Object.keys(inputs)) {
-    newState[Number(idxStr)] = inputs[idxStr];
+    const idx = Number(idxStr);
+    const value = inputs[idxStr];
+    newState[idx] = value;
+    if (newNeuronFactors[idx].dynamicsModel === "izhikevich") {
+      newNeuronFactors[idx].v = value;
+    } else {
+      newNeuronFactors[idx].membranePotential = value;
+    }
   }
 
   const vector = newState.map((state, i) => ({ state, factors: newNeuronFactors[i] }));
