@@ -418,18 +418,6 @@ function create(n, options = {}) {
       factors: {
         type,
         position,
-        nodeType: "neuron", // 'neuron' (default) | 'dendriticSubunit' | 'glial' --
-        // the top-level dispatch key for genuinely different node kinds.
-        // Unlike dynamicsModel (which only distinguishes LIF vs Izhikevich
-        // NEURONS), this distinguishes whether a node is a spiking neuron
-        // at all. Dendritic subunits and glial nodes never "fire" in the
-        // discrete threshold-crossing sense -- they transmit a CONTINUOUS
-        // graded value every tick instead (closer to real dendritic
-        // depolarization or astrocytic modulation than an all-or-none
-        // action potential), still delivered through the same delay/
-        // pendingDrive pipeline as ordinary spikes. See create()'s doc
-        // comment and the dedicated helper functions below for how each
-        // is constructed and how their dynamics differ.
         membranePotential: 0, // the REAL LIF dynamical variable (what `state`
         // used to hold directly). Izhikevich-mode neurons use v/u instead
         // (already factors-resident) and ignore this field entirely.
@@ -616,13 +604,9 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
   //    computed HERE, using this tick's incoming as injected current --
   //    genuinely capable of bursting limit cycles that linear-subtraction
   //    adaptation on plain LIF cannot reach, at similar computational cost.
-  // Non-neuron nodes (dendriticSubunit, glial) never fire in this discrete
-  // sense -- they always report false here, and instead compute a
-  // CONTINUOUS output below, transmitted every tick regardless.
   const izhikevichNext = {}; // neuron index -> { v, u } for izhikevich-mode neurons this tick
   const fired = model.vector.map((neuron, i) => {
     const f = neuron.factors;
-    if (f.nodeType !== "neuron") return false;
     if (f.dynamicsModel === "izhikevich") {
       const I = incoming[i] * izhikevichCurrentScale + f.homeostaticCurrent + gaussianNoise(nextRandom) * noiseAmplitude;
       let v = f.v, u = f.u;
@@ -645,60 +629,16 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     return false;
   });
 
-  // 1b. Continuous output for non-neuron nodes -- computed from this tick's
-  // sensed `incoming` (same delayed-drive pipeline every node reads), never
-  // gated by a discrete firing event:
-  //  - dendriticSubunit: a sigmoid of local synaptic drive (Poirazi & Mel's
-  //    own formalization of a dendritic subunit -- an abstract, NMDA-spike-
-  //    style coincidence detector, not a channel-level simulation).
-  //    Concentrated, coincident input crosses the sigmoid's steep region;
-  //    the same total input spread out over time does not -- the core
-  //    property this whole node type exists to test.
-  //  - glial: senses local activity via ordinary incoming connections FROM
-  //    nearby neurons (reusing the same distance-decayed connectivity
-  //    everything else uses -- "nearby" falls out of topology, not a
-  //    separate sensing-radius parameter), depleting an internal buffer
-  //    proportional to what it senses and recovering slowly otherwise (a
-  //    third, distinct timescale from STDP and homeostasis). Output is a
-  //    suppressive signal that grows as the buffer depletes.
-  const continuousOutput = new Array(n).fill(0);
-  const newBufferLevel = new Array(n);
+  // 2. Schedule THIS tick's firing for delayed future delivery -- reads
+  // factors.strength (the real synaptic efficacy), NOT `weight` (which is
+  // now purely a binary existence marker, unused in any internal dynamics).
   for (let i = 0; i < n; i++) {
-    const f = model.vector[i].factors;
-    if (f.nodeType === "dendriticSubunit") {
-      const gain = f.subunitGain != null ? f.subunitGain : 10;
-      const threshold = f.subunitThreshold != null ? f.subunitThreshold : 0.5;
-      continuousOutput[i] = 1 / (1 + Math.exp(-gain * (incoming[i] - threshold)));
-    } else if (f.nodeType === "glial") {
-      const depletionRate = f.bufferDepletionRate != null ? f.bufferDepletionRate : 0.3;
-      const recoveryRate = f.bufferRecoveryRate != null ? f.bufferRecoveryRate : 0.02;
-      const currentBuffer = f.bufferLevel != null ? f.bufferLevel : 1;
-      newBufferLevel[i] = clip(
-        currentBuffer - depletionRate * incoming[i] + recoveryRate * (1 - currentBuffer),
-        0,
-        1
-      );
-      const outputGain = f.glialOutputGain != null ? f.glialOutputGain : 1;
-      continuousOutput[i] = -(1 - newBufferLevel[i]) * outputGain;
-    }
-  }
-
-  // 2. Schedule THIS tick's transmission for delayed future delivery.
-  // Ordinary neurons only transmit on a discrete fire event (unchanged).
-  // Dendritic subunits and glial nodes transmit their CONTINUOUS output
-  // every tick, regardless -- a graded signal, not a spike. Reads
-  // factors.strength (the real synaptic efficacy), NOT `weight` (a pure
-  // existence marker, unused in any internal dynamics).
-  for (let i = 0; i < n; i++) {
-    const f = model.vector[i].factors;
-    const isContinuous = f.nodeType === "dendriticSubunit" || f.nodeType === "glial";
-    if (!fired[i] && !isContinuous) continue;
-    const outputValue = isContinuous ? continuousOutput[i] : 1;
+    if (!fired[i]) continue;
     const row = model.matrix[i];
     for (let j = 0; j < n; j++) {
       if (!row[j].factors.exists) continue;
       const slot = row[j].factors.delay - 1; // delay>=1, slot 0 of `pendingDrive` = next tick
-      if (slot >= 0 && slot < maxDelay) pendingDrive[slot][j] += row[j].factors.strength * outputValue;
+      if (slot >= 0 && slot < maxDelay) pendingDrive[slot][j] += row[j].factors.strength;
     }
   }
 
@@ -709,20 +649,12 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
   // frequency ADAPTATION subtracted as a persistent, slowly-decaying
   // suppressive current -- abstracted from the real slow-potassium
   // mechanism, not a channel-level simulation. `newState` (top-level) is
-  // ALWAYS just a binary fired-indicator for ordinary neurons -- the one
-  // documented exception is non-neuron nodes, whose `state` instead holds
-  // their current continuous output directly (a real, inspectable
-  // quantity, arguably more useful for that node type than a spike flag
-  // would be, and still consistent with the compat principle: it's a
-  // real-valued activation, exactly what a conventional reader would want).
+  // computed separately below and is ALWAYS just a binary fired-indicator,
+  // for both dynamics models -- never the real dynamical variable.
   const newMembranePotential = new Array(n);
   const newState = new Array(n);
   for (let i = 0; i < n; i++) {
     const f = model.vector[i].factors;
-    if (f.nodeType !== "neuron") {
-      newState[i] = continuousOutput[i];
-      continue;
-    }
     newState[i] = fired[i] ? 1 : 0;
     if (f.dynamicsModel === "izhikevich") continue; // real state lives in factors.v/u instead
     const baseline = fired[i]
@@ -736,18 +668,9 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
   // adaptation build-up/decay for spike-frequency adaptation). Izhikevich-
   // mode neurons skip threshold homeostasis entirely (their firing
   // threshold is the fixed v>=30 crossing, not an adjustable field) and
-  // persist their own (v, u) instead. Non-neuron nodes have none of this --
-  // dendritic subunits are fixed (their sigmoid gain/threshold never
-  // drift), glial nodes persist only their own buffer level.
+  // persist their own (v, u) instead.
   const newNeuronFactors = model.vector.map((neuron, i) => {
     const f = { ...neuron.factors };
-    if (f.nodeType === "glial") {
-      f.bufferLevel = newBufferLevel[i];
-      return f;
-    }
-    if (f.nodeType === "dendriticSubunit") {
-      return f; // fixed parameters; nothing to update per tick
-    }
     if (f.dynamicsModel === "izhikevich") {
       f.v = izhikevichNext[i].v;
       f.u = izhikevichNext[i].u;
@@ -831,9 +754,7 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
     const isExcitatory = newNeuronFactors[i].type === "excitatory";
     for (let j = 0; j < n; j++) {
       const c = newMatrix[i][j];
-      if (!c.factors.exists || c.factors.structural) continue; // structural links
-      // (dendritic subunit -> soma; glial <-> neuron) are fixed structural
-      // facts, never touched by ordinary plasticity -- see create() helpers.
+      if (!c.factors.exists) continue;
       if (Math.abs(c.factors.eligibility) >= activityThreshold) c.factors.lastActive = age;
       const delta = c.factors.eligibility * (hebbianRate + modulatoryRate * ambientModulator);
       if (Math.abs(delta) < 1e-9) continue;
@@ -862,9 +783,6 @@ function step(model, inputs = {}, feedback = 0, options = {}) {
       const isExcitatory = newNeuronFactors[i].type === "excitatory";
       for (let j = 0; j < n; j++) {
         const c = newMatrix[i][j];
-        if (c.factors.structural) continue; // fixed structural fact -- can
-        // never grow, and can never be pruned either (a dendritic subunit
-        // must never quietly disconnect from its own soma).
         if (!c.factors.exists) {
           if (Math.abs(c.factors.eligibility) >= growthThreshold && nextRandom() < rate * growthProb) {
             c.factors.exists = true;
